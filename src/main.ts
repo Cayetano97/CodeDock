@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
 import { open } from "@tauri-apps/plugin-dialog";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   formatCount,
   formatGroupCount,
@@ -36,6 +38,24 @@ import {
   type ThemeSetting,
 } from "./lib/theme";
 import { formatVersion, getAppVersion } from "./lib/version";
+import {
+  BACKDROP_DISMISS_DECISION,
+  CLOSE_DISMISS_DECISION,
+  createUpdateScheduler,
+  ESC_DISMISS_DECISION,
+  fillUpdateTemplate,
+  getDismissedVersion,
+  getNextOpenVersion,
+  recordPromptDecision,
+  shouldAutoInstallOnStart,
+  shouldDeferForPanels,
+  shouldOfferUpdate,
+  UPDATE_MIN_CHECK_INTERVAL_MS,
+  UPDATE_PERIODIC_CHECK_INTERVAL_MS,
+} from "./lib/update";
+
+/** Re-exported so triggers stay observable/testable from the entry point. */
+export { UPDATE_MIN_CHECK_INTERVAL_MS, UPDATE_PERIODIC_CHECK_INTERVAL_MS };
 
 interface Config {
   baseDirs: string[];
@@ -93,6 +113,25 @@ const reload = document.querySelector<HTMLButtonElement>("#reload")!;
 const quit = document.querySelector<HTMLButtonElement>("#quit")!;
 const errorLine = document.querySelector<HTMLElement>("#error")!;
 const statusbarVersion = document.querySelector<HTMLElement>("#statusbar-version")!;
+
+// Update UI (nullable: the popup/row are progressive enhancement over the
+// base window; every access guards so a missing node never breaks boot).
+const updateBackdrop = document.querySelector<HTMLElement>("#update-backdrop");
+const updatePopup = document.querySelector<HTMLElement>("#update-popup");
+const updateTitle = document.querySelector<HTMLElement>("#update-title");
+const updateMessage = document.querySelector<HTMLElement>("#update-message");
+const updateProgress = document.querySelector<HTMLElement>("#update-progress");
+const updateProgressBar = document.querySelector<HTMLElement>("#update-progress-bar");
+const updateProgressTrack = document.querySelector<HTMLElement>("#update-progress-track");
+const updateProgressLabel = document.querySelector<HTMLElement>("#update-progress-label");
+const updateError = document.querySelector<HTMLElement>("#update-error");
+const updateNowBtn = document.querySelector<HTMLButtonElement>("#update-now");
+const updateLaterBtn = document.querySelector<HTMLButtonElement>("#update-later");
+const updateNextOpenBtn = document.querySelector<HTMLButtonElement>("#update-next-open");
+const updateCloseBtn = document.querySelector<HTMLButtonElement>("#update-close");
+const checkUpdatesBtn = document.querySelector<HTMLButtonElement>("#check-updates");
+const updateStatus = document.querySelector<HTMLElement>("#update-status");
+const updateLabel = document.querySelector<HTMLElement>("#update-label");
 
 /** Shortcut for the active language. */
 function t(key: I18nKey): string {
@@ -232,6 +271,18 @@ function applyI18n(): void {
   if (filter) filter.innerHTML = "<kbd>/</kbd>" + t("statusbar.filter");
   const clear = document.querySelector<HTMLElement>("#st-clear");
   if (clear) clear.innerHTML = "<kbd>esc</kbd>" + t("statusbar.clear");
+
+  // Update checker row + popup (progress/error slots keep their state and
+  // are only re-labeled when idle).
+  if (updateLabel) updateLabel.textContent = t("update.checkNow");
+  if (checkUpdatesBtn) checkUpdatesBtn.textContent = t("update.checkNow");
+  if (updateTitle) updateTitle.textContent = t("update.title");
+  if (updateNowBtn) updateNowBtn.textContent = t("update.now");
+  if (updateLaterBtn) updateLaterBtn.textContent = t("update.later");
+  if (updateNextOpenBtn) updateNextOpenBtn.textContent = t("update.nextOpen");
+  if (pendingUpdateVersion !== null && !updateDownloading) {
+    paintUpdateMessage(pendingUpdateVersion);
+  }
 }
 
 /**
@@ -247,6 +298,290 @@ async function showVersion(): Promise<void> {
     statusbarVersion.textContent = text;
   } catch {
     // The app works the same without a visible version.
+  }
+}
+
+// ── in-app updates ──────────────────────────────────────────────
+// Prompt-first via the updater + process plugins: check on start, on
+// window-show (5-minute throttle) and every 6 hours while running, plus a
+// manual Settings check that bypasses the throttle. Every path degrades
+// silently outside a packaged build (dev/browser `check()` throws and is
+// swallowed; only the manual row surfaces an inline state).
+
+/** Minimal structural view of the plugin `Update` (test-mock friendly). */
+interface UpdateHandle {
+  version: string;
+  currentVersion: string;
+  downloadAndInstall: (
+    onEvent?: (event: {
+      event: "Started" | "Progress" | "Finished";
+      data?: { contentLength?: number; chunkLength?: number };
+    }) => void,
+  ) => Promise<void>;
+}
+
+let pendingUpdateVersion: string | null = null;
+let pendingUpdateHandle: UpdateHandle | null = null;
+let deferredUpdateHandle: UpdateHandle | null = null;
+let updateDownloading = false;
+const updateScheduler = createUpdateScheduler();
+
+/** localStorage or null (private mode never breaks the checker). */
+function safeStorage(): Storage | null {
+  try {
+    return localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function setUpdateStatus(msg: string): void {
+  if (updateStatus) updateStatus.textContent = msg;
+}
+
+function paintUpdateMessage(version: string): void {
+  if (updateMessage) {
+    updateMessage.textContent = fillUpdateTemplate(t("update.message"), { version });
+  }
+}
+
+function paintUpdateProgress(percent: number): void {
+  const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+  if (updateProgressBar) updateProgressBar.style.width = `${String(clamped)}%`;
+  if (updateProgressTrack) updateProgressTrack.setAttribute("aria-valuenow", String(clamped));
+  if (updateProgressLabel) {
+    updateProgressLabel.textContent = fillUpdateTemplate(t("update.progress"), {
+      percent: clamped,
+    });
+  }
+}
+
+function setUpdateControlsLocked(locked: boolean): void {
+  for (const btn of [updateNowBtn, updateLaterBtn, updateNextOpenBtn, updateCloseBtn]) {
+    if (btn) btn.disabled = locked;
+  }
+}
+
+/**
+ * Whether the prompt must stay hidden right now. CodeDock panels are always
+ * laid out (no modal panels), so "open" means the user is working inside
+ * Settings (`#panel-settings`) or the folder Actions panel (`#panel-bases`,
+ * add/remove folder): focus inside either defers the prompt until close.
+ */
+function updatePanelState(): { settingsOpen: boolean; actionsOpen: boolean } {
+  try {
+    const active = document.activeElement as HTMLElement | null;
+    return {
+      settingsOpen: Boolean(active?.closest?.("#panel-settings")),
+      actionsOpen: Boolean(active?.closest?.("#panel-bases")),
+    };
+  } catch {
+    return { settingsOpen: false, actionsOpen: false };
+  }
+}
+
+function showUpdateModal(version: string, handle: UpdateHandle): void {
+  pendingUpdateVersion = version;
+  pendingUpdateHandle = handle;
+  if (updateTitle) updateTitle.textContent = t("update.title");
+  paintUpdateMessage(version);
+  if (updateNowBtn) updateNowBtn.textContent = t("update.now");
+  if (updateLaterBtn) updateLaterBtn.textContent = t("update.later");
+  if (updateNextOpenBtn) updateNextOpenBtn.textContent = t("update.nextOpen");
+  if (updateError) updateError.textContent = "";
+  if (updateProgress) updateProgress.hidden = true;
+  paintUpdateProgress(0);
+  updateDownloading = false;
+  setUpdateControlsLocked(false);
+  if (updateBackdrop) updateBackdrop.hidden = false;
+  if (updatePopup) updatePopup.hidden = false;
+  // Focus starts on the primary action per spec.
+  try {
+    updateNowBtn?.focus();
+  } catch {
+    // Focus is best-effort: the prompt stays usable without it.
+  }
+}
+
+function hideUpdateModal(): void {
+  if (updateBackdrop) updateBackdrop.hidden = true;
+  if (updatePopup) updatePopup.hidden = true;
+  pendingUpdateVersion = null;
+  pendingUpdateHandle = null;
+}
+
+/** Later / On-next-open / Esc / close / backdrop all funnel through here. */
+function dismissUpdateAs(decision: "later" | "next-open"): void {
+  const version = pendingUpdateVersion;
+  if (version !== null) recordPromptDecision(version, decision, safeStorage());
+  hideUpdateModal();
+}
+
+/** Update now: download with progress %, install, relaunch. */
+async function installPendingUpdate(): Promise<void> {
+  const handle = pendingUpdateHandle;
+  const version = pendingUpdateVersion;
+  if (!handle || version === null || updateDownloading) return;
+  updateDownloading = true;
+  setUpdateControlsLocked(true);
+  if (updateProgress) updateProgress.hidden = false;
+  if (updateError) updateError.textContent = "";
+  paintUpdateProgress(0);
+  let total: number | undefined;
+  let received = 0;
+  try {
+    await handle.downloadAndInstall((event) => {
+      try {
+        if (event.event === "Started") {
+          if (typeof event.data?.contentLength === "number") total = event.data.contentLength;
+          paintUpdateProgress(0);
+        } else if (event.event === "Progress") {
+          received += event.data?.chunkLength ?? 0;
+          paintUpdateProgress(total !== undefined && total > 0 ? (received / total) * 100 : 0);
+        } else {
+          paintUpdateProgress(100);
+        }
+      } catch {
+        // Progress paint never fails the install.
+      }
+    });
+    recordPromptDecision(version, "now", safeStorage());
+    await relaunch();
+  } catch (e) {
+    // Recoverable: the prompt stays usable for a retry or a postpone.
+    if (updateError) {
+      const detail = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+      updateError.textContent =
+        detail !== "" ? `${t("update.installError")}: ${detail}` : t("update.installError");
+    }
+    updateDownloading = false;
+    setUpdateControlsLocked(false);
+  }
+}
+
+/**
+ * Automatic check (throttled) or manual Settings check (bypasses the
+ * throttle). Returns the found update or null. Silent unless manual.
+ */
+async function checkForUpdates(opts: { manual?: boolean } = {}): Promise<unknown> {
+  const manual = opts.manual === true;
+  try {
+    if (!manual && !updateScheduler.canCheckNow()) return null;
+    const found = (await check()) as unknown as UpdateHandle | null;
+    updateScheduler.markChecked();
+    if (!found || typeof found.version !== "string" || found.version.trim() === "") {
+      if (manual) setUpdateStatus(t("update.upToDate"));
+      return null;
+    }
+    const available = found.version.trim();
+    let current = "";
+    try {
+      current = await getAppVersion();
+    } catch {
+      current = "";
+    }
+    if (current.trim() === "") current = found.currentVersion ?? "";
+    const storage = safeStorage();
+    const nextOpen = getNextOpenVersion(storage);
+    // On-next-open persists across restarts: auto-install, no re-prompt.
+    if (shouldAutoInstallOnStart(available, nextOpen)) {
+      pendingUpdateVersion = available;
+      pendingUpdateHandle = found;
+      await installPendingUpdate();
+      return found;
+    }
+    if (
+      !shouldOfferUpdate(available, current, {
+        dismissedVersion: getDismissedVersion(),
+        nextOpenVersion: nextOpen,
+      })
+    ) {
+      return null;
+    }
+    // Suppressed while Settings/Actions are open; re-offered on close.
+    if (shouldDeferForPanels(updatePanelState())) {
+      deferredUpdateHandle = found;
+      return null;
+    }
+    showUpdateModal(available, found);
+    return found;
+  } catch {
+    // Silent dev-degrade: only the manual row surfaces an inline state.
+    if (manual) setUpdateStatus(t("update.checkError"));
+    return null;
+  }
+}
+
+/** Settings "Check for updates": bypasses the 5-minute throttle. */
+export async function checkForUpdatesManual(): Promise<void> {
+  await checkForUpdates({ manual: true });
+}
+
+/** Re-offers a panel-deferred prompt once suppression clears. */
+function maybeReofferDeferredUpdate(): void {
+  if (!deferredUpdateHandle || pendingUpdateHandle || updateDownloading) return;
+  if (shouldDeferForPanels(updatePanelState())) return;
+  const handle = deferredUpdateHandle;
+  deferredUpdateHandle = null;
+  try {
+    showUpdateModal(handle.version, handle);
+  } catch {
+    // A failed re-offer simply retries on the next trigger.
+    deferredUpdateHandle = handle;
+  }
+}
+
+/** Wires modal gestures + Settings row once (idempotent). */
+let updateEventsWired = false;
+function wireUpdateEvents(): void {
+  if (updateEventsWired) return;
+  updateEventsWired = true;
+  try {
+    updateNowBtn?.addEventListener("click", () => {
+      void installPendingUpdate();
+    });
+    updateLaterBtn?.addEventListener("click", () => {
+      if (updateDownloading) return;
+      dismissUpdateAs("later");
+    });
+    updateNextOpenBtn?.addEventListener("click", () => {
+      if (updateDownloading) return;
+      dismissUpdateAs("next-open");
+    });
+    // Esc, the close button and the backdrop all behave as Later.
+    updateCloseBtn?.addEventListener("click", () => {
+      if (updateDownloading) return;
+      if (pendingUpdateVersion !== null) {
+        recordPromptDecision(pendingUpdateVersion, CLOSE_DISMISS_DECISION, safeStorage());
+      }
+      hideUpdateModal();
+    });
+    updateBackdrop?.addEventListener("click", (e) => {
+      if (e.target !== updateBackdrop || updateDownloading) return;
+      if (pendingUpdateVersion !== null) {
+        recordPromptDecision(pendingUpdateVersion, BACKDROP_DISMISS_DECISION, safeStorage());
+      }
+      hideUpdateModal();
+    });
+    updatePopup?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !updateDownloading) {
+        e.preventDefault();
+        if (pendingUpdateVersion !== null) {
+          recordPromptDecision(pendingUpdateVersion, ESC_DISMISS_DECISION, safeStorage());
+        }
+        hideUpdateModal();
+      }
+    });
+    checkUpdatesBtn?.addEventListener("click", () => {
+      setUpdateStatus("");
+      void checkForUpdatesManual();
+    });
+    // Re-offer a deferred prompt when the panels close.
+    document.addEventListener("focusout", () => {
+      window.setTimeout(maybeReofferDeferredUpdate, 0);
+    });
+  } catch {
+    // Update wiring never breaks the base window.
   }
 }
 
@@ -779,6 +1114,8 @@ async function init(): Promise<void> {
   // The version does not depend on the backend: paint it even if
   // `get_config` fails.
   void showVersion();
+  // Update wiring never blocks boot and never throws (silent dev-degrade).
+  wireUpdateEvents();
   try {
     const [cfg, terms] = await Promise.all([
       invoke<Config>("get_config"),
@@ -816,6 +1153,19 @@ async function init(): Promise<void> {
     await listen<string>("open-error", (event) => {
       showError(event.payload);
     });
+    // In-app updates: check on start, on window-show (5-minute throttle)
+    // and every 6 hours while running. All throttled inside
+    // `checkForUpdates`; every failure degrades silently.
+    void checkForUpdates();
+    window.addEventListener("focus", () => {
+      void checkForUpdates();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) void checkForUpdates();
+    });
+    window.setInterval(() => {
+      void checkForUpdates();
+    }, UPDATE_PERIODIC_CHECK_INTERVAL_MS);
   } catch (e) {
     showError(typeof e === "string" ? e : String(e));
   }

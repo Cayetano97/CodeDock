@@ -220,6 +220,8 @@ pub fn run() {
         }))
         .plugin(autostart_plugin())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Always menu-bar only: no Dock icon, no Cmd+Tab entry.
             // In the installed .app this is covered by `LSUIElement`

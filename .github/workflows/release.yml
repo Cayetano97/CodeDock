@@ -1,0 +1,92 @@
+name: Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tag-guard:
+    name: Tag guard · tag equals triple version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # The version lives in three places (package.json, src-tauri/tauri.conf.json,
+      # src-tauri/Cargo.toml) and the frontend reads it at runtime, never hardcoded.
+      # A drifted tag (e.g. v1.2.4 while the synced version is 1.2.3) must fail
+      # before any Release is created.
+      - name: Fail when the tag drifts from the synced version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          TAURI="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          CARGO="$(grep -m1 '^version' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "tag=$TAG package.json=$PKG tauri.conf.json=$TAURI Cargo.toml=$CARGO"
+          if [ -z "$TAG" ] || [ -z "$PKG" ] || [ -z "$TAURI" ] || [ -z "$CARGO" ]; then
+            echo "::error::tag-guard: empty version source (tag=$TAG pkg=$PKG tauri=$TAURI cargo=$CARGO)"
+            exit 1
+          fi
+          if [ "$TAG" != "$PKG" ] || [ "$TAG" != "$TAURI" ] || [ "$TAG" != "$CARGO" ]; then
+            echo "::error::tag-guard: tag v$TAG does not match synced version (package.json=$PKG tauri.conf.json=$TAURI Cargo.toml=$CARGO)"
+            exit 1
+          fi
+          echo "tag-guard: v$TAG matches triple version $PKG"
+
+  publish-tauri:
+    name: Publish · macOS ${{ matrix.target }}
+    needs: tag-guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-13
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+      - run: npm run build
+
+      - uses: tauri-apps/tauri-action@v1
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "CodeDock ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download CodeDock ${{ github.ref_name }}."
+          releaseDraft: false
+          prerelease: false
+          generateReleaseNotes: true
+          args: --target ${{ matrix.target }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

@@ -119,7 +119,17 @@ export type I18nKey =
   | "statusbar.filter"
   | "statusbar.clear"
   | "dialog.chooseBase"
-  | "terminal.notInstalled";
+  | "terminal.notInstalled"
+  | "update.title"
+  | "update.message"
+  | "update.now"
+  | "update.later"
+  | "update.nextOpen"
+  | "update.progress"
+  | "update.checkNow"
+  | "update.upToDate"
+  | "update.checkError"
+  | "update.installError";
 
 type Dictionary = Record<I18nKey, string>;
 
@@ -177,6 +187,16 @@ const EN: Dictionary = {
   "statusbar.clear": "clear",
   "dialog.chooseBase": "Choose base folder",
   "terminal.notInstalled": "(not installed)",
+  "update.title": "Update available",
+  "update.message": "Version {version} is ready to install.",
+  "update.now": "Update now",
+  "update.later": "Later",
+  "update.nextOpen": "On next open",
+  "update.progress": "Downloading… {percent}%",
+  "update.checkNow": "Check for updates",
+  "update.upToDate": "You're up to date",
+  "update.checkError": "Couldn't check for updates",
+  "update.installError": "Couldn't install the update",
 };
 
 /** Spanish strings. Missing keys fall back to English at runtime. */
@@ -233,6 +253,16 @@ const ES: Dictionary = {
   "statusbar.clear": "limpiar",
   "dialog.chooseBase": "Elige carpeta base",
   "terminal.notInstalled": "(no instalado)",
+  "update.title": "Actualización disponible",
+  "update.message": "La versión {version} está lista para instalar.",
+  "update.now": "Actualizar ahora",
+  "update.later": "Más tarde",
+  "update.nextOpen": "En la próxima apertura",
+  "update.progress": "Descargando… {percent}%",
+  "update.checkNow": "Buscar actualizaciones",
+  "update.upToDate": "Estás al día",
+  "update.checkError": "No se pudo buscar actualizaciones",
+  "update.installError": "No se pudo instalar la actualización",
 };
 
 const STRINGS: Record<Language, Dictionary> = { en: EN, es: ES };

@@ -58,3 +58,30 @@ export async function getAppVersion(): Promise<string> {
   }
   return buildVersion();
 }
+
+/**
+ * Normalizes a release tag to its bare version: `"v1.2.3"` -> `"1.2.3"`,
+ * `"V1.2.3"` -> `"1.2.3"`, `"  1.2.3  "` trimmed. Non-strings yield `""`.
+ * Used by the release tag-guard (`v*` tag must equal the triple-synced
+ * version in `package.json` / `tauri.conf.json` / `Cargo.toml`).
+ */
+export function normalizeTag(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const v = raw.trim();
+  if (v === "") return "";
+  return v.startsWith("v") || v.startsWith("V") ? v.slice(1).trim() : v;
+}
+
+/**
+ * Whether a pushed release tag matches the synced app version.
+ * Pure and testable: the workflow tag-guard implements the same comparison
+ * in shell (`${GITHUB_REF_NAME#v}` vs the three version sources).
+ */
+export function isVersionTagMatch(tag: unknown, version: unknown): boolean {
+  const t = normalizeTag(tag);
+  if (t === "") return false;
+  if (typeof version !== "string") return false;
+  const v = version.trim();
+  if (v === "") return false;
+  return t === v;
+}

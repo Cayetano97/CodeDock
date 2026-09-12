@@ -31,7 +31,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg"],
+    "targets": ["dmg", "app"],
+    "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "macOS": {
       "signingIdentity": "-"
@@ -45,5 +46,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxQzg1MzUxNjI5NzkzNTgKUldSWWs1ZGlVVlBJd2ZEVGxvZWg2eS9DL3poVER0OEgwVE56bHp6SzRLWUw5L0ZSempFYWpwTGgK",
+      "endpoints": [
+        "https://github.com/Cayetano97/CodeDock/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

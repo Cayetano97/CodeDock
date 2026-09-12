@@ -810,6 +810,103 @@ section.panel .panel-body {
 
 /* Forced high contrast: without the translucent tint, rows fall back
    to the system background. */
+/* ── update popup ────────────────────────────
+   Prompt-first modal over a backdrop. Hidden via the `hidden` attribute;
+   buttons lock (disabled) for the whole download+install. */
+#update-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 50;
+}
+
+#update-backdrop[hidden] {
+  display: none;
+}
+
+#update-popup {
+  width: min(420px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+#update-popup h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#update-message {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#update-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+#update-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+}
+
+#update-progress-label {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#update-error {
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+  min-height: 18px;
+  white-space: pre-wrap;
+}
+
+#update-error:empty {
+  display: none;
+}
+
+#update-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+#update-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+}
+
+#update-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+#update-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#update-now {
+  border-color: var(--accent);
+}
+
 @media (forced-colors: active) {
   #projects li[data-base] button,
   #projects li[data-base].selected button,

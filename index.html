@@ -143,11 +143,42 @@
             </span>
           </label>
           <button id="save" type="button">Save</button>
+          <div class="row" id="update-row">
+            <span id="update-label">Check for updates</span>
+            <button id="check-updates" type="button">Check for updates</button>
+          </div>
+          <p class="hint" id="update-status" role="status" aria-live="polite"></p>
         </div>
       </section>
 
       <p id="error" role="alert" aria-live="assertive"></p>
     </main>
+
+    <div id="update-backdrop" hidden>
+      <div
+        id="update-popup"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="update-title"
+        aria-describedby="update-message"
+      >
+        <h2 id="update-title">Update available</h2>
+        <p id="update-message"></p>
+        <div id="update-progress" hidden>
+          <div id="update-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div id="update-progress-bar"></div>
+          </div>
+          <p id="update-progress-label" role="status" aria-live="polite"></p>
+        </div>
+        <p id="update-error" role="alert"></p>
+        <div id="update-actions">
+          <button id="update-now" type="button">Update now</button>
+          <button id="update-later" type="button">Later</button>
+          <button id="update-next-open" type="button">On next open</button>
+          <button id="update-close" type="button" aria-label="Close">×</button>
+        </div>
+      </div>
+    </div>
 
     <footer id="statusbar" aria-hidden="true">
       <span id="st-navigate"><kbd>↑↓</kbd>/<kbd>j k</kbd>navigate</span>

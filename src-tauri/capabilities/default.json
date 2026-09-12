@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "CodeDock main window permissions",
   "windows": ["main"],
-  "permissions": ["core:default", "autostart:default", "dialog:default"]
+  "permissions": ["core:default", "autostart:default", "dialog:default", "updater:default", "process:default"]
 }
