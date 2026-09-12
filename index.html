@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#1033b1" />
+    <title>CodeDock</title>
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/src/style.css" />
+    <script>
+      // Pre-paint theme boot: mirrors the persisted setting from localStorage
+      // so the first paint already uses the right tokens (no flash). The
+      // backend `Config.theme` reconciles it in `main.ts` right after.
+      (function () {
+        try {
+          var ids = [
+            "codedock-dark",
+            "abyss-blue",
+            "ember-dusk",
+            "kelp-night",
+            "orchid-haze",
+            "codedock-light",
+            "harbor-mist",
+            "parchment",
+          ];
+          var stored = localStorage.getItem("codedock-theme") || "auto";
+          var theme = ids.indexOf(stored) >= 0 ? stored : "auto";
+          if (theme === "auto") {
+            var light =
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: light)").matches;
+            theme = light ? "codedock-light" : "codedock-dark";
+          }
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          /* A missing DOM API never blocks boot: :root stays dark. */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <main id="app" aria-label="CodeDock">
+      <div id="palette">
+        <header id="app-header">
+          <div class="brand">
+            <h1>codedock</h1>
+          </div>
+          <div id="header-actions">
+            <button id="reload" type="button" title="Rescan the base folders (r)">Reload</button>
+            <button id="quit" type="button" title="Quit CodeDock">Quit</button>
+          </div>
+        </header>
+
+        <section id="section-projects" aria-label="Projects">
+          <div id="prompt">
+            <span class="prompt-prefix" aria-hidden="true">&gt;</span>
+            <input
+              id="search"
+              type="text"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              placeholder="filter projects…  ( / to focus )"
+              aria-label="Filter projects"
+              role="combobox"
+              aria-expanded="true"
+              aria-controls="projects"
+              aria-autocomplete="list"
+            />
+          </div>
+          <p id="count" role="status" aria-live="polite" aria-atomic="true"></p>
+          <ul id="projects" role="listbox" aria-label="Projects"></ul>
+          <p id="empty"></p>
+        </section>
+      </div>
+
+      <section class="panel" id="panel-bases" aria-label="Base folders">
+        <h2 id="bases-title">Base folders</h2>
+        <div class="panel-body">
+          <p class="hint" id="bases-hint">Each direct subfolder shows up as a project.</p>
+          <ul id="bases" aria-label="Base folders"></ul>
+          <button id="add-base" type="button">+ add folder…</button>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-settings" aria-label="Settings">
+        <h2 id="settings-title">Settings</h2>
+        <div class="panel-body">
+          <label class="row">
+            <span id="language-label">Language</span>
+            <select id="language" aria-label="Interface language">
+              <option value="auto">System (auto)</option>
+              <option value="en">English</option>
+              <option value="es">Español</option>
+            </select>
+          </label>
+          <label class="row">
+            <span id="theme-label">Theme</span>
+            <select id="theme" aria-label="Color theme">
+              <option value="auto">System (auto)</option>
+              <option value="codedock-dark">CodeDock dark</option>
+              <option value="abyss-blue">Abyss blue</option>
+              <option value="ember-dusk">Ember dusk</option>
+              <option value="kelp-night">Kelp night</option>
+              <option value="orchid-haze">Orchid haze</option>
+              <option value="codedock-light">CodeDock light</option>
+              <option value="harbor-mist">Harbor mist</option>
+              <option value="parchment">Parchment</option>
+            </select>
+          </label>
+          <label class="row">
+            <span id="terminal-label">Terminal</span>
+            <select id="terminal" aria-label="Terminal to open projects in"></select>
+          </label>
+          <p class="hint" id="terminal-hint"></p>
+          <label class="row">
+            <span id="sort-label">Sort projects</span>
+            <select id="sort-mode" aria-label="How to sort projects">
+              <option value="name">By name</option>
+              <option value="base">By base folder</option>
+            </select>
+          </label>
+          <p class="hint" id="sort-hint">By folder groups with each base header and color.</p>
+          <label class="row">
+            <span id="autostart-label">Launch at login</span>
+            <input id="autostart" type="checkbox" />
+          </label>
+          <p class="hint" id="autostart-hint">Off: start CodeDock by hand.</p>
+          <label class="row col">
+            <span id="opencode-label">opencode path (empty = auto-detect)</span>
+            <span class="field">
+              <input
+                id="opencode-bin"
+                type="text"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                placeholder="~/.opencode/bin/opencode"
+              />
+            </span>
+          </label>
+          <button id="save" type="button">Save</button>
+        </div>
+      </section>
+
+      <p id="error" role="alert" aria-live="assertive"></p>
+    </main>
+
+    <footer id="statusbar" aria-hidden="true">
+      <span id="st-navigate"><kbd>↑↓</kbd>/<kbd>j k</kbd>navigate</span>
+      <span id="st-open"><kbd>⏎</kbd>open</span>
+      <span id="st-filter"><kbd>/</kbd>filter</span>
+      <span id="st-clear" class="hide-sm"><kbd>esc</kbd>clear</span>
+      <span id="statusbar-version"></span>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

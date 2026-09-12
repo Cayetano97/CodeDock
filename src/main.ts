@@ -1,0 +1,824 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { disable, enable, isEnabled } from "@tauri-apps/plugin-autostart";
+import { open } from "@tauri-apps/plugin-dialog";
+import {
+  formatCount,
+  formatGroupCount,
+  normalizeLanguageSetting,
+  projectAriaLabel,
+  removeBaseAriaLabel,
+  resolveLanguage,
+  terminalHint,
+  translate,
+  type I18nKey,
+  type Language,
+  type LanguageSetting,
+} from "./lib/i18n";
+import {
+  baseColorFor,
+  baseLabel,
+  clampIndex,
+  getVisibleProjects,
+  moveSelection,
+  normalizeBaseDir,
+  normalizeSortMode,
+  type Project,
+  type SortMode,
+} from "./lib/model";
+import {
+  normalizeThemeSetting,
+  resolveEffectiveTheme,
+  themeNameKey,
+  themeScheme,
+  THEME_IDS,
+  type ThemeId,
+  type ThemeSetting,
+} from "./lib/theme";
+import { formatVersion, getAppVersion } from "./lib/version";
+
+interface Config {
+  baseDirs: string[];
+  opencodeBin: string | null;
+  terminal: string;
+  sortMode: SortMode;
+  language: LanguageSetting;
+  theme: ThemeSetting;
+}
+
+interface TerminalInfo {
+  id: string;
+  name: string;
+  available: boolean;
+}
+
+let config: Config = {
+  baseDirs: [],
+  opencodeBin: null,
+  terminal: "ghostty",
+  sortMode: "name",
+  language: "auto",
+  theme: "auto",
+};
+
+let lang: Language = "en";
+let languageSetting: LanguageSetting = "auto";
+let themeSetting: ThemeSetting = "auto";
+let effectiveTheme: ThemeId = "codedock-dark";
+let terminals: TerminalInfo[] = [];
+let projects: Project[] = [];
+let visible: Project[] = [];
+let selected = -1;
+let errorTimer = 0;
+// OS login-item state (source of truth, like QuickSpot): not stored in
+// `codedock.config.json`, read via `isEnabled()` and applied via
+// `enable()` / `disable()`.
+let autostartEnabled = false;
+
+const search = document.querySelector<HTMLInputElement>("#search")!;
+const count = document.querySelector<HTMLElement>("#count")!;
+const list = document.querySelector<HTMLElement>("#projects")!;
+const empty = document.querySelector<HTMLElement>("#empty")!;
+const bases = document.querySelector<HTMLElement>("#bases")!;
+const addBase = document.querySelector<HTMLButtonElement>("#add-base")!;
+const autostartToggle = document.querySelector<HTMLInputElement>("#autostart")!;
+const terminalSelect = document.querySelector<HTMLSelectElement>("#terminal")!;
+const terminalHintEl = document.querySelector<HTMLElement>("#terminal-hint")!;
+const sortSelect = document.querySelector<HTMLSelectElement>("#sort-mode")!;
+const themeSelect = document.querySelector<HTMLSelectElement>("#theme")!;
+const languageSelect = document.querySelector<HTMLSelectElement>("#language")!;
+const opencodeBin = document.querySelector<HTMLInputElement>("#opencode-bin")!;
+const save = document.querySelector<HTMLButtonElement>("#save")!;
+const reload = document.querySelector<HTMLButtonElement>("#reload")!;
+const quit = document.querySelector<HTMLButtonElement>("#quit")!;
+const errorLine = document.querySelector<HTMLElement>("#error")!;
+const statusbarVersion = document.querySelector<HTMLElement>("#statusbar-version")!;
+
+/** Shortcut for the active language. */
+function t(key: I18nKey): string {
+  return translate(lang, key);
+}
+
+/** System locale tag (`navigator.language`), empty when unavailable. */
+function systemTag(): string {
+  try {
+    const tag =
+      typeof navigator !== "undefined" ? navigator.language : "";
+    return typeof tag === "string" ? tag : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Applies a stored language setting: an explicit `"en"`/`"es"` wins, `"auto"`
+ * follows the system language with an English fallback.
+ */
+function applyLanguageSetting(setting: unknown): void {
+  languageSetting = normalizeLanguageSetting(setting);
+  config.language = languageSetting;
+  lang = resolveLanguage(languageSetting, systemTag());
+}
+
+/** Whether the OS currently prefers a light color scheme. */
+function prefersLightScheme(): boolean {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: light)").matches
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Applies a stored theme setting: an explicit id wins, `"auto"` follows the
+ * OS scheme through the default pair. Swaps `<html data-theme>` (instant, no
+ * reload), syncs the `color-scheme` meta so scrollbars and form controls
+ * match, and mirrors the setting to localStorage for the pre-paint boot
+ * snippet. Pure DOM side effects; persistence goes through `saveAll`.
+ */
+function applyThemeSetting(setting: unknown): void {
+  themeSetting = normalizeThemeSetting(setting);
+  config.theme = themeSetting;
+  effectiveTheme = resolveEffectiveTheme(themeSetting, prefersLightScheme());
+  document.documentElement.setAttribute("data-theme", effectiveTheme);
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]');
+  if (meta) meta.content = themeScheme(effectiveTheme);
+  try {
+    localStorage.setItem("codedock-theme", themeSetting);
+  } catch {
+    // Private mode or no storage: boot simply falls back to dark.
+  }
+}
+
+/**
+ * Applies the active language to every static label in the window.
+ * Dynamic lists (projects, bases, terminal options) are re-rendered by
+ * their own functions right after.
+ */
+function applyI18n(): void {
+  document.documentElement.lang = lang;
+  document.querySelector("#section-projects")?.setAttribute("aria-label", t("projects.sectionAria"));
+  document.querySelector("#panel-bases")?.setAttribute("aria-label", t("bases.sectionAria"));
+  document.querySelector("#panel-settings")?.setAttribute("aria-label", t("settings.sectionAria"));
+
+  const setText = (selector: string, key: I18nKey): void => {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) el.textContent = t(key);
+  };
+  setText("#bases-title", "bases.title");
+  setText("#bases-hint", "bases.hint");
+  setText("#add-base", "bases.add");
+  setText("#settings-title", "settings.title");
+  setText("#language-label", "settings.language");
+  setText("#theme-label", "settings.theme");
+  setText("#terminal-label", "settings.terminal");
+  setText("#sort-label", "settings.sort");
+  setText("#sort-hint", "settings.sortHint");
+  setText("#autostart-label", "settings.autostart");
+  setText("#autostart-hint", "settings.autostartHint");
+  setText("#opencode-label", "settings.opencodePath");
+  setText("#save", "settings.save");
+
+  const reloadBtn = document.querySelector<HTMLButtonElement>("#reload");
+  if (reloadBtn) {
+    reloadBtn.textContent = t("header.reload");
+    reloadBtn.title = t("header.reloadTitle");
+  }
+  const quitBtn = document.querySelector<HTMLButtonElement>("#quit");
+  if (quitBtn) {
+    quitBtn.textContent = t("header.quit");
+    quitBtn.title = t("header.quitTitle");
+  }
+
+  search.placeholder = t("search.placeholder");
+  search.setAttribute("aria-label", t("search.ariaLabel"));
+  list.setAttribute("aria-label", t("projects.listAria"));
+  bases.setAttribute("aria-label", t("bases.listAria"));
+  terminalSelect.setAttribute("aria-label", t("settings.terminalAria"));
+  sortSelect.setAttribute("aria-label", t("settings.sortAria"));
+  languageSelect.setAttribute("aria-label", t("settings.languageAria"));
+  autostartToggle.setAttribute("aria-label", t("settings.autostart"));
+  opencodeBin.placeholder = t("settings.opencodePlaceholder");
+
+  // Sort option labels (values stay stable: "name" / "base").
+  const nameOpt = sortSelect.querySelector('option[value="name"]');
+  if (nameOpt) nameOpt.textContent = t("settings.sortByName");
+  const baseOpt = sortSelect.querySelector('option[value="base"]');
+  if (baseOpt) baseOpt.textContent = t("settings.sortByBase");
+
+  // Language options: "auto" follows the system, "en"/"es" are manual.
+  const autoOpt = languageSelect.querySelector('option[value="auto"]');
+  if (autoOpt) autoOpt.textContent = t("settings.languageAuto");
+
+  // Theme options: "auto" follows the OS scheme, the rest are curated ids.
+  themeSelect.setAttribute("aria-label", t("settings.themeAria"));
+  const themeAutoOpt = themeSelect.querySelector('option[value="auto"]');
+  if (themeAutoOpt) themeAutoOpt.textContent = t("settings.themeAuto");
+  for (const id of THEME_IDS) {
+    const opt = themeSelect.querySelector(`option[value="${id}"]`);
+    if (opt) opt.textContent = t(themeNameKey(id));
+  }
+
+  // Statusbar keeps its <kbd> chips; only the trailing word is translated.
+  const navigate = document.querySelector<HTMLElement>("#st-navigate");
+  if (navigate) navigate.innerHTML = "<kbd>↑↓</kbd>/<kbd>j k</kbd>" + t("statusbar.navigate");
+  const openEl = document.querySelector<HTMLElement>("#st-open");
+  if (openEl) openEl.innerHTML = "<kbd>⏎</kbd>" + t("statusbar.open");
+  const filter = document.querySelector<HTMLElement>("#st-filter");
+  if (filter) filter.innerHTML = "<kbd>/</kbd>" + t("statusbar.filter");
+  const clear = document.querySelector<HTMLElement>("#st-clear");
+  if (clear) clear.innerHTML = "<kbd>esc</kbd>" + t("statusbar.clear");
+}
+
+/**
+ * Paints the version in the statusbar only (single source of truth)
+ * without blocking boot: `getAppVersion` reads Tauri at runtime with a
+ * build-time fallback, never hardcoded. Decorative: on failure the
+ * statusbar slot stays empty and hidden via CSS (`:empty`).
+ */
+async function showVersion(): Promise<void> {
+  try {
+    const text = formatVersion(await getAppVersion());
+    if (text === "") return;
+    statusbarVersion.textContent = text;
+  } catch {
+    // The app works the same without a visible version.
+  }
+}
+
+function showError(msg: string): void {
+  errorLine.textContent = msg;
+  window.clearTimeout(errorTimer);
+  errorTimer = window.setTimeout(() => {
+    errorLine.textContent = "";
+  }, 6000);
+}
+
+function terminalName(): string {
+  return terminals.find((t) => t.id === config.terminal)?.name ?? config.terminal;
+}
+
+function syncTerminalHint(): void {
+  terminalHintEl.textContent = terminalHint(lang, config.terminal);
+}
+
+function renderTerminalOptions(): void {
+  terminalSelect.replaceChildren();
+  for (const term of terminals) {
+    const opt = document.createElement("option");
+    opt.value = term.id;
+    opt.textContent = term.available ? term.name : `${term.name} ${t("terminal.notInstalled")}`;
+    terminalSelect.appendChild(opt);
+  }
+  // The backend normalizes: the stored value is always a known id.
+  terminalSelect.value = config.terminal;
+  syncTerminalHint();
+}
+
+function scrollSelectedIntoView(): void {
+  const el = list.querySelector<HTMLElement>("li.selected");
+  el?.scrollIntoView({ block: "nearest" });
+}
+
+function paintBaseTint(el: HTMLElement, base: string): void {
+  // Deterministic soft tint per folder: same base -> same color on
+  // projects, group headers and the base list (legend). Under a light
+  // theme the opaque light table replaces the dark translucent tints.
+  const color = baseColorFor(base, themeScheme(effectiveTheme));
+  el.style.setProperty("--base-bg", color.bg);
+  el.style.setProperty("--base-accent", color.accent);
+  el.style.setProperty("--base-border", color.border);
+}
+
+function renderProjects(): void {
+  const prevPath = visible[selected]?.path;
+  visible = getVisibleProjects(projects, search.value, config.sortMode);
+
+  // Keep the selection when the project is still visible; else the first one.
+  if (visible.length === 0) {
+    selected = -1;
+  } else {
+    const kept = prevPath ? visible.findIndex((p) => p.path === prevPath) : -1;
+    selected = kept >= 0 ? kept : clampIndex(selected, visible.length);
+    if (selected < 0) selected = 0;
+  }
+
+  list.replaceChildren();
+  const grouped = config.sortMode === "base";
+  let lastBase: string | null = null;
+  visible.forEach((p, i) => {
+    // In by-folder view, a group header with label + count.
+    // The text label also identifies the folder for color-blind users
+    // and screen readers (color is never the only signal).
+    if (grouped && p.base !== lastBase) {
+      lastBase = p.base;
+      const groupCount = visible.filter((v) => v.base === p.base).length;
+      const header = document.createElement("li");
+      header.className = "group-header";
+      header.setAttribute("role", "presentation");
+      paintBaseTint(header, p.base);
+      const label = document.createElement("span");
+      label.className = "group-label";
+      label.textContent = baseLabel(p.base);
+      label.title = p.base;
+      const meta = document.createElement("span");
+      meta.className = "group-count";
+      meta.textContent = formatGroupCount(lang, groupCount);
+      header.append(label, meta);
+      list.appendChild(header);
+    }
+    const li = document.createElement("li");
+    li.dataset.base = p.base;
+    if (i === selected) li.className = "selected";
+    paintBaseTint(li, p.base);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = `proj-${i}`;
+    btn.setAttribute("role", "option");
+    btn.setAttribute("aria-selected", i === selected ? "true" : "false");
+    const name = document.createElement("span");
+    name.className = "proj-name";
+    name.textContent = p.name;
+    const path = document.createElement("span");
+    path.className = "proj-path";
+    path.textContent = p.path;
+    btn.append(name, path);
+    btn.setAttribute(
+      "aria-label",
+      projectAriaLabel(lang, p.name, terminalName(), baseLabel(p.base)),
+    );
+    btn.addEventListener("click", () => void openProject(p.path));
+    btn.addEventListener("mousemove", () => {
+      if (selected !== i) {
+        selected = i;
+        syncSelection();
+      }
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  });
+
+  search.setAttribute(
+    "aria-activedescendant",
+    selected >= 0 ? `proj-${String(selected)}` : "",
+  );
+  count.textContent =
+    projects.length === 0
+      ? t("count.noProjects")
+      : formatCount(lang, selected + 1, visible.length, projects.length);
+  empty.textContent =
+    projects.length === 0
+      ? t("empty.noProjects")
+      : visible.length === 0
+        ? t("empty.noMatches")
+        : "";
+}
+
+function syncSelection(): void {
+  // Only project rows (`li[data-base]`): group headers
+  // (`li.group-header`) are not selectable and do not count for the index.
+  const items = list.querySelectorAll("li[data-base]");
+  items.forEach((li, i) => {
+    const active = i === selected;
+    li.classList.toggle("selected", active);
+    li.querySelector("button")?.setAttribute(
+      "aria-selected",
+      active ? "true" : "false",
+    );
+  });
+  search.setAttribute(
+    "aria-activedescendant",
+    selected >= 0 ? `proj-${String(selected)}` : "",
+  );
+  if (projects.length > 0) {
+    count.textContent = formatCount(lang, selected + 1, visible.length, projects.length);
+  }
+  scrollSelectedIntoView();
+}
+
+function move(delta: number): void {
+  if (visible.length === 0) return;
+  selected = moveSelection(selected, delta, visible.length);
+  syncSelection();
+}
+
+function openSelected(): void {
+  const p = visible[selected];
+  if (p) void openProject(p.path);
+}
+
+function renderBases(): void {
+  bases.replaceChildren();
+  config.baseDirs.forEach((dir, i) => {
+    const li = document.createElement("li");
+    paintBaseTint(li, dir);
+    const span = document.createElement("span");
+    span.className = "base-path";
+    span.textContent = dir;
+    span.title = dir;
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.textContent = t("bases.remove");
+    rm.setAttribute("aria-label", removeBaseAriaLabel(lang, dir));
+    rm.addEventListener("click", () => void removeBase(i));
+    li.append(span, rm);
+    bases.appendChild(li);
+  });
+}
+
+function syncSettings(): void {
+  sortSelect.value = config.sortMode;
+  themeSelect.value = themeSetting;
+  languageSelect.value = languageSetting;
+  opencodeBin.value = config.opencodeBin ?? "";
+  if (terminalSelect.options.length > 0) {
+    terminalSelect.value = config.terminal;
+    syncTerminalHint();
+  }
+}
+
+/**
+ * Reads the OS login-item state (the source of truth, like QuickSpot) and
+ * paints the checkbox. Never throws: on failure the toggle keeps its
+ * previous value.
+ */
+async function syncAutostart(): Promise<void> {
+  try {
+    autostartEnabled = await isEnabled();
+    autostartToggle.checked = autostartEnabled;
+  } catch {
+    // The toggle stays as-is; toggling will retry on next change.
+  }
+}
+
+async function refreshProjects(): Promise<void> {
+  projects = await invoke<Project[]>("list_projects");
+  renderProjects();
+}
+
+// Saves are chained serially: this keeps two concurrent `saveAll` calls
+// (e.g. adding two folders quickly or switching terminal while saving)
+// from overwriting each other and dropping a freshly added base via a
+// stale `config` response.
+let saveChain: Promise<void> = Promise.resolve();
+
+function enqueueSave(task: () => Promise<void>): Promise<void> {
+  const run = saveChain.then(task, task);
+  // The chain never stays broken on failure: the caller sees the error.
+  saveChain = run.catch(() => undefined);
+  return run;
+}
+
+async function saveAll(): Promise<void> {
+  // Captured at enqueue time (not at run time): two back-to-back saves each
+  // keep their own bases and the last one wins with the freshest snapshot,
+  // without losing just-added folders.
+  const baseDirs = [...config.baseDirs];
+  const opencodeBinValue =
+    opencodeBin.value.trim() === "" ? null : opencodeBin.value.trim();
+  const terminal = terminalSelect.value;
+  const sortMode = normalizeSortMode(sortSelect.value);
+  const language = normalizeLanguageSetting(languageSelect.value);
+  const theme = normalizeThemeSetting(themeSelect.value);
+  return enqueueSave(async () => {
+    config = await invoke<Config>("save_config", {
+      baseDirs,
+      opencodeBin: opencodeBinValue,
+      terminal,
+      sortMode,
+      language,
+      theme,
+    });
+    // The backend normalizes: apply the canonical mode and language to the UI.
+    // An explicit "en"/"es" is kept as-is; "auto" follows the system.
+    config.sortMode = normalizeSortMode(config.sortMode);
+    applyLanguageSetting(config.language);
+    applyThemeSetting(config.theme);
+    applyI18n();
+    syncSettings();
+    renderTerminalOptions();
+    // The backend sanitizes (trims, dedupes): re-render so stale bases
+    // never linger in the UI. Bases are re-painted here because tints
+    // follow the active scheme; rows refresh below via `refreshProjects`.
+    renderBases();
+    // Immediate refresh: the backend also emits `projects-changed` with the
+    // freshly scanned list, so the window shows inner folders as soon as the
+    // base is added (other views get it too).
+    await refreshProjects();
+  });
+}
+
+async function openProject(path: string): Promise<void> {
+  try {
+    await invoke("open_project", { path });
+  } catch (e) {
+    showError(typeof e === "string" ? e : String(e));
+  }
+}
+
+async function removeBase(index: number): Promise<void> {
+  const prevBases = [...config.baseDirs];
+  config.baseDirs = config.baseDirs.filter((_, i) => i !== index);
+  renderBases();
+  try {
+    await saveAll();
+  } catch (e) {
+    // Reverts the optimistic change: otherwise the UI would show a base the
+    // backend did not store and it would look "not loading" on reload.
+    config.baseDirs = prevBases;
+    renderBases();
+    showError(typeof e === "string" ? e : String(e));
+  }
+}
+
+addBase.addEventListener("click", () => {
+  void (async () => {
+    try {
+      const picked = await open({
+        directory: true,
+        multiple: true,
+        title: t("dialog.chooseBase"),
+      });
+      if (picked === null) return;
+      const dirs = (Array.isArray(picked) ? picked : [picked]).filter(
+        (d): d is string => typeof d === "string" && d.trim() !== "",
+      );
+      if (dirs.length === 0) return;
+      // Normalizes so `/a` and `/a/` do not duplicate the base.
+      const known = new Set(config.baseDirs.map(normalizeBaseDir));
+      const prevBases = [...config.baseDirs];
+      let added = false;
+      for (const raw of dirs) {
+        const d = normalizeBaseDir(raw);
+        if (d === "" || known.has(d)) continue;
+        known.add(d);
+        config.baseDirs.push(d);
+        added = true;
+      }
+      if (!added) return;
+      // Clears the filter: otherwise new projects stay hidden behind the
+      // previous filter and it looks like the folder "did not load".
+      if (search.value !== "") search.value = "";
+      renderBases();
+      try {
+        await saveAll();
+      } catch (e) {
+        // Reverts the optimistic change so a base the backend did not store
+        // is not shown (its inner folders would never appear).
+        config.baseDirs = prevBases;
+        renderBases();
+        showError(typeof e === "string" ? e : String(e));
+      }
+    } catch (e) {
+      showError(typeof e === "string" ? e : String(e));
+    }
+  })();
+});
+
+save.addEventListener("click", () => {
+  void (async () => {
+    try {
+      await saveAll();
+    } catch (e) {
+      showError(typeof e === "string" ? e : String(e));
+    }
+  })();
+});
+
+// Launch at login: immediate OS toggle (same mechanism as QuickSpot), not
+// part of `save_config`. The OS is the source of truth; on failure the
+// checkbox reverts so it never shows a state that was not applied.
+autostartToggle.addEventListener("change", () => {
+  const next = autostartToggle.checked;
+  // Optimistic revert guard: disable the toggle while applying.
+  autostartToggle.disabled = true;
+  void (async () => {
+    try {
+      if (next) await enable();
+      else await disable();
+      autostartEnabled = next;
+      autostartToggle.checked = next;
+    } catch (e) {
+      autostartToggle.checked = autostartEnabled;
+      showError(typeof e === "string" ? e : String(e));
+    } finally {
+      autostartToggle.disabled = false;
+    }
+  })();
+});
+
+// Sort change: immediate re-render for instant feedback and a persistent
+// save like the terminal picker.
+sortSelect.addEventListener("change", () => {
+  const next = normalizeSortMode(sortSelect.value);
+  if (next === config.sortMode) return;
+  const prev = config.sortMode;
+  config.sortMode = next;
+  sortSelect.value = next;
+  renderProjects();
+  void (async () => {
+    try {
+      await saveAll();
+    } catch (e) {
+      // Reverts the optimistic change when the backend did not save.
+      config.sortMode = prev;
+      sortSelect.value = prev;
+      renderProjects();
+      showError(typeof e === "string" ? e : String(e));
+    }
+  })();
+});
+
+// Theme change: instant apply for immediate feedback and a persistent
+// save like the language picker. "auto" follows the OS scheme (with a live
+// listener below); an explicit id is kept until changed again.
+themeSelect.addEventListener("change", () => {
+  const nextSetting = normalizeThemeSetting(themeSelect.value);
+  if (nextSetting === themeSetting) return;
+  const prevSetting = themeSetting;
+  applyThemeSetting(nextSetting);
+  themeSelect.value = themeSetting;
+  renderProjects();
+  renderBases();
+  void (async () => {
+    try {
+      await saveAll();
+    } catch (e) {
+      // Reverts the optimistic change when the backend did not save.
+      applyThemeSetting(prevSetting);
+      themeSelect.value = prevSetting;
+      renderProjects();
+      renderBases();
+      showError(typeof e === "string" ? e : String(e));
+    }
+  })();
+});
+
+// `auto` tracks live OS scheme changes without a reload; an explicit theme
+// is untouched by the OS.
+function watchSystemScheme(): void {
+  try {
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    mq.addEventListener("change", () => {
+      if (themeSetting !== "auto") return;
+      applyThemeSetting("auto");
+      renderProjects();
+      renderBases();
+    });
+  } catch {
+    // No matchMedia: `auto` simply stays on the boot resolution.
+  }
+}
+
+// Language change: immediate re-render for instant feedback and a persistent
+// save like the sort and terminal pickers. "auto" follows the system language
+// (English fallback); an explicit "en"/"es" is kept until changed again.
+languageSelect.addEventListener("change", () => {
+  const nextSetting = normalizeLanguageSetting(languageSelect.value);
+  if (nextSetting === languageSetting) return;
+  const prevSetting = languageSetting;
+  const prevLang = lang;
+  applyLanguageSetting(nextSetting);
+  languageSelect.value = languageSetting;
+  applyI18n();
+  renderTerminalOptions();
+  renderProjects();
+  renderBases();
+  void (async () => {
+    try {
+      await saveAll();
+    } catch (e) {
+      // Reverts the optimistic change when the backend did not save.
+      languageSetting = prevSetting;
+      config.language = prevSetting;
+      lang = prevLang;
+      languageSelect.value = prevSetting;
+      applyI18n();
+      renderTerminalOptions();
+      renderProjects();
+      renderBases();
+      showError(typeof e === "string" ? e : String(e));
+    }
+  })();
+});
+
+// Immediate save: the chosen terminal is the one used
+// when a project is clicked, without relying on the Save button.
+terminalSelect.addEventListener("change", () => {
+  void (async () => {
+    try {
+      await saveAll();
+    } catch (e) {
+      showError(typeof e === "string" ? e : String(e));
+      terminalSelect.value = config.terminal;
+      syncTerminalHint();
+    }
+  })();
+});
+
+search.addEventListener("input", renderProjects);
+
+search.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || (e.ctrlKey && (e.key === "n" || e.key === "j"))) {
+    e.preventDefault();
+    move(1);
+  } else if (e.key === "ArrowUp" || (e.ctrlKey && (e.key === "p" || e.key === "k"))) {
+    e.preventDefault();
+    move(-1);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    openSelected();
+  } else if (e.key === "Escape") {
+    if (search.value !== "") {
+      search.value = "";
+      renderProjects();
+    } else {
+      search.blur();
+    }
+  }
+});
+
+// TUI-style global shortcuts: `/` focuses, `j/k` navigate when not typing.
+document.addEventListener("keydown", (e) => {
+  const target = e.target as HTMLElement | null;
+  const typing =
+    target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement;
+  if (e.key === "/" && !typing) {
+    e.preventDefault();
+    search.focus();
+  } else if (!typing && (e.key === "j" || e.key === "ArrowDown")) {
+    move(1);
+  } else if (!typing && (e.key === "k" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    move(-1);
+  } else if (!typing && e.key === "Enter") {
+    openSelected();
+  }
+});
+
+reload.addEventListener("click", () => {
+  void (async () => {
+    try {
+      projects = await invoke<Project[]>("refresh");
+      renderProjects();
+    } catch (e) {
+      showError(typeof e === "string" ? e : String(e));
+    }
+  })();
+});
+
+quit.addEventListener("click", () => {
+  void invoke("quit");
+});
+
+async function init(): Promise<void> {
+  // The version does not depend on the backend: paint it even if
+  // `get_config` fails.
+  void showVersion();
+  try {
+    const [cfg, terms] = await Promise.all([
+      invoke<Config>("get_config"),
+      invoke<TerminalInfo[]>("list_terminals"),
+    ]);
+    // Old configs lack `sortMode` (falls back to "name", the historic order).
+    // `language` is a stored setting: "auto" (default, follows the system
+    // language with an English fallback) or an explicit "en"/"es" that wins.
+    // `theme` is the same shape for color: "auto" (default, follows the OS
+    // scheme) or one of the 8 curated ids; unknown values fall back to "auto".
+    config = { ...cfg, sortMode: normalizeSortMode(cfg.sortMode) };
+    applyLanguageSetting(cfg.language);
+    applyThemeSetting((cfg as Config).theme);
+    terminals = terms;
+    applyI18n();
+    renderTerminalOptions();
+    syncSettings();
+    renderBases();
+    watchSystemScheme();
+    await refreshProjects();
+    // OS login-item state is independent of the config file: refresh after
+    // boot so the checkbox shows the real state (like QuickSpot).
+    void syncAutostart();
+    // The backend emits `projects-changed` after `save_config` / `refresh` /
+    // tray reload with the freshly scanned list: the payload is applied
+    // directly for an immediate refresh (no second invoke).
+    await listen<Project[]>("projects-changed", (event) => {
+      if (Array.isArray(event.payload)) {
+        projects = event.payload;
+        renderProjects();
+      } else {
+        void refreshProjects();
+      }
+    });
+    await listen<string>("open-error", (event) => {
+      showError(event.payload);
+    });
+  } catch (e) {
+    showError(typeof e === "string" ? e : String(e));
+  }
+}
+
+void init();

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" preserveAspectRatio="xMidYMid meet" shape-rendering="geometricPrecision">
+<defs>
+<linearGradient id="bgGrad" gradientUnits="userSpaceOnUse" x1="250" y1="-106" x2="262" y2="618">
+    <stop offset="0%" stop-color="#25a4eb"/>
+    <stop offset="100%" stop-color="#1033b1"/>
+  </linearGradient>
+<clipPath id="shape"><rect width="512" height="512" rx="112.64"/></clipPath>
+</defs>
+<g clip-path="url(#shape)">
+  <rect width="512" height="512" rx="112.64" fill="url(#bgGrad)"/>
+  <g transform="translate(51.2, 51.2) scale(17.066666666666666)" shape-rendering="geometricPrecision">
+    <path d="M10 9.5 8 12l2 2.5" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M14 21h1" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="m14 9.5 2 2.5-2 2.5" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M5 21a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M9 21h1" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</g>
+</svg>

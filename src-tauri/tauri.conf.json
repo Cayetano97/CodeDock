@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CodeDock",
+  "version": "0.1.0",
+  "identifier": "dev.codedock.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1421",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "CodeDock",
+        "width": 560,
+        "height": 680,
+        "minWidth": 440,
+        "minHeight": 520,
+        "center": true,
+        "resizable": true,
+        "maximized": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg"],
+    "category": "DeveloperTool",
+    "macOS": {
+      "signingIdentity": "-"
+    },
+      "shortDescription": "Launch your projects in your terminal with opencode",
+      "longDescription": "CodeDock lists the subfolders of your base folders and opens the chosen one in your favorite terminal with opencode: a new tab when the terminal is already running, a new window when it is not (terminal-dependent).",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

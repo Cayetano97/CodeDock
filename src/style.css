@@ -1,0 +1,832 @@
+:root {
+  color-scheme: dark;
+  /* opencode TUI: near-black, surfaces lifted by border, never by shadow */
+  --bg: #0a0a0b;
+  --surface: #131315;
+  --surface-2: #1a1a1d;
+  --selected: #222228;
+  --selected-border: #5e9eff;
+  --text: #e4e4e7;
+  --muted: #9a9aa0;
+  --faint: #63636b;
+  --accent: #5e9eff;
+  --danger: #ff8f8f;
+  --border: #26262b;
+  --hairline: #1f1f23;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "JetBrains Mono",
+    "Cascadia Code", Consolas, "Liberation Mono", monospace;
+}
+
+/* ── curated themes ──────────────────────────────
+   `:root` above is the `codedock-dark` base (no-attribute boot stays
+   dark). Each `[data-theme]` block overrides the same 12 token names plus
+   `color-scheme` and the `--base-*` defaults. A vitest gate
+   (`src/lib/theme-tokens.test.ts`) enforces the AA minimums on every
+   block, so tune values against the gate, never by eye. */
+[data-theme="codedock-dark"] {
+  color-scheme: dark;
+  --bg: #0a0a0b;
+  --surface: #131315;
+  --surface-2: #1a1a1d;
+  --selected: #222228;
+  --selected-border: #5e9eff;
+  --text: #e4e4e7;
+  --muted: #9a9aa0;
+  --faint: #63636b;
+  --accent: #5e9eff;
+  --danger: #ff8f8f;
+  --border: #26262b;
+  --hairline: #1f1f23;
+  --base-bg: rgba(122, 169, 255, 0.11);
+  --base-accent: #7aa9ff;
+  --base-border: rgba(122, 169, 255, 0.38);
+}
+
+[data-theme="abyss-blue"] {
+  color-scheme: dark;
+  --bg: #0a1220;
+  --surface: #111a2b;
+  --surface-2: #1a2540;
+  --selected: #22314f;
+  --selected-border: #6ea8ff;
+  --text: #e8eefc;
+  --muted: #a9b6cf;
+  --faint: #8b96b3;
+  --accent: #6ea8ff;
+  --danger: #ffa0a0;
+  --border: #22304d;
+  --hairline: #182540;
+  --base-bg: rgba(122, 169, 255, 0.11);
+  --base-accent: #7aa9ff;
+  --base-border: rgba(122, 169, 255, 0.38);
+}
+
+[data-theme="ember-dusk"] {
+  color-scheme: dark;
+  --bg: #130d0b;
+  --surface: #1d1512;
+  --surface-2: #291d18;
+  --selected: #3a2822;
+  --selected-border: #f0a35e;
+  --text: #f3e9e1;
+  --muted: #c4ada1;
+  --faint: #968075;
+  --accent: #f0a35e;
+  --danger: #ffa0a0;
+  --border: #3d2c25;
+  --hairline: #2c201b;
+  --base-bg: rgba(122, 169, 255, 0.11);
+  --base-accent: #7aa9ff;
+  --base-border: rgba(122, 169, 255, 0.38);
+}
+
+[data-theme="kelp-night"] {
+  color-scheme: dark;
+  --bg: #0b120e;
+  --surface: #131c16;
+  --surface-2: #1b2921;
+  --selected: #253a2e;
+  --selected-border: #6fd3a7;
+  --text: #e7f3eb;
+  --muted: #a7c0b1;
+  --faint: #7f9487;
+  --accent: #6fd3a7;
+  --danger: #ffa0a0;
+  --border: #253b2f;
+  --hairline: #1a2a22;
+  --base-bg: rgba(122, 169, 255, 0.11);
+  --base-accent: #7aa9ff;
+  --base-border: rgba(122, 169, 255, 0.38);
+}
+
+[data-theme="orchid-haze"] {
+  color-scheme: dark;
+  --bg: #110e16;
+  --surface: #1b1624;
+  --surface-2: #261f33;
+  --selected: #352a48;
+  --selected-border: #c69aff;
+  --text: #f0eaf8;
+  --muted: #c0b1d6;
+  --faint: #9183a8;
+  --accent: #c69aff;
+  --danger: #ffa0a0;
+  --border: #382d4e;
+  --hairline: #281f38;
+  --base-bg: rgba(122, 169, 255, 0.11);
+  --base-accent: #7aa9ff;
+  --base-border: rgba(122, 169, 255, 0.38);
+}
+
+[data-theme="codedock-light"] {
+  color-scheme: light;
+  --bg: #f6f6f8;
+  --surface: #ffffff;
+  --surface-2: #ebecef;
+  --selected: #dbe6ff;
+  --selected-border: #1e5ccf;
+  --text: #151519;
+  --muted: #4c4c55;
+  --faint: #6f6f79;
+  --accent: #1e5ccf;
+  --danger: #b3261e;
+  --border: #d8d8de;
+  --hairline: #e5e5ea;
+  --base-bg: #dfe9fb;
+  --base-accent: #1f4fae;
+  --base-border: #a9c1e8;
+}
+
+[data-theme="harbor-mist"] {
+  color-scheme: light;
+  --bg: #edf2f6;
+  --surface: #fbfdff;
+  --surface-2: #dfe8ef;
+  --selected: #cfe2f3;
+  --selected-border: #0e5aa6;
+  --text: #11202e;
+  --muted: #40566b;
+  --faint: #5f7689;
+  --accent: #0e5aa6;
+  --danger: #a8271c;
+  --border: #c3d2de;
+  --hairline: #d6e1ea;
+  --base-bg: #dfe9fb;
+  --base-accent: #1f4fae;
+  --base-border: #a9c1e8;
+}
+
+[data-theme="parchment"] {
+  color-scheme: light;
+  --bg: #f5f0e4;
+  --surface: #fffdf6;
+  --surface-2: #e8ddc6;
+  --selected: #eedcb4;
+  --selected-border: #7c5200;
+  --text: #1f1804;
+  --muted: #584a2e;
+  --faint: #6f6247;
+  --accent: #7c5200;
+  --danger: #9c2a1d;
+  --border: #d5c5a1;
+  --hairline: #e2d6ba;
+  --base-bg: #dfe9fb;
+  --base-accent: #1f4fae;
+  --base-border: #a9c1e8;
+}
+
+/* Light themes: the selected row name keeps body text (white on a pale
+   selection would vanish) and the statusbar drops its dark veil. */
+[data-theme="codedock-light"] #projects li.selected .proj-name,
+[data-theme="harbor-mist"] #projects li.selected .proj-name,
+[data-theme="parchment"] #projects li.selected .proj-name {
+  color: var(--text);
+}
+
+[data-theme="codedock-light"] #statusbar,
+[data-theme="harbor-mist"] #statusbar,
+[data-theme="parchment"] #statusbar {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── shell palette ───────────────────────────────
+   Responsive (mobile-first, Apple HIG "adaptable layout"):
+   one centered column on narrow windows (the default Tauri size
+   is 560px), two columns when there is room, three columns on
+   ultrawide so large displays show more content with less nesting
+   instead of growing side margins. Vertical fill uses dvh (with
+   vh fallback) so a maximized/tall window stretches the project
+   list instead of leaving a void above the statusbar. */
+#app {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 12px 12px 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-content: start;
+  align-items: start;
+  box-sizing: border-box;
+}
+
+#palette {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#palette > section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+@media (min-width: 880px) {
+  #app {
+    max-width: 1120px;
+    /* Cap the side column: beyond ~380px settings rows just stretch
+       while project rows starve. Extra width goes to the palette. */
+    grid-template-columns: minmax(0, 1.65fr) minmax(300px, 380px);
+    grid-template-areas:
+      "palette bases"
+      "palette settings"
+      "error error";
+    /* Fill the viewport height so tall/maximized windows have no void:
+       the palette stretches and the list scrolls internally. */
+    min-height: 100vh;
+    min-height: 100dvh;
+    align-items: start;
+    align-content: start;
+  }
+
+  #palette {
+    grid-area: palette;
+    min-width: 0;
+    align-self: stretch;
+    /* Viewport-bound card: list grows to fill, then scrolls inside.
+       min-height === max-height pins the card to the viewport so a
+       tall/maximized window shows more projects instead of a void;
+       the side column stays top-aligned and can be shorter. */
+    min-height: calc(100vh - 60px);
+    min-height: calc(100dvh - 60px);
+    max-height: calc(100vh - 60px);
+    max-height: calc(100dvh - 60px);
+    position: sticky;
+    top: 12px;
+  }
+
+  #panel-bases {
+    grid-area: bases;
+  }
+
+  #panel-settings {
+    grid-area: settings;
+  }
+
+  #error {
+    grid-area: error;
+  }
+}
+
+@media (min-width: 1280px) {
+  #app {
+    max-width: 1440px;
+    padding: 16px 16px 48px;
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  }
+
+  #palette {
+    top: 16px;
+    min-height: calc(100vh - 64px);
+    min-height: calc(100dvh - 64px);
+    max-height: calc(100vh - 64px);
+    max-height: calc(100dvh - 64px);
+  }
+}
+
+/* Ultrawide: stop stacking the side panels and lay all three cards
+   in one row. Uses horizontal room (HIG "leverage large displays")
+   and keeps bases + settings visible without scrolling past each other. */
+@media (min-width: 1560px) {
+  #app {
+    max-width: 1680px;
+    grid-template-columns: minmax(0, 1.7fr) minmax(280px, 340px) minmax(320px, 400px);
+    grid-template-areas:
+      "palette bases settings"
+      "error error error";
+  }
+}
+
+#app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+h1 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin: 0;
+  text-transform: lowercase;
+}
+
+h1::before {
+  content: "▸ ";
+  color: var(--accent);
+}
+
+#header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── TUI buttons: flat, hairline, kbd-like ───── */
+button {
+  font: inherit;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button:hover {
+  color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--text);
+}
+
+#header-actions button {
+  border-color: var(--border);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+/* ── prompt ────────────────────────────────────── */
+#prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+}
+
+#prompt:focus-within {
+  border-bottom-color: var(--accent);
+}
+
+.prompt-prefix {
+  color: var(--accent);
+  font-weight: 700;
+  user-select: none;
+}
+
+#search,
+#opencode-bin {
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  padding: 0;
+  font: inherit;
+  caret-color: var(--accent);
+}
+
+#search:focus,
+#opencode-bin:focus {
+  outline: none;
+}
+
+#search::placeholder,
+#opencode-bin::placeholder {
+  color: var(--faint);
+}
+
+#count {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--faint);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--hairline);
+  min-height: 26px;
+}
+
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+}
+
+#projects {
+  flex: 1 1 auto;
+  min-height: 140px;
+  /* Narrow windows: page scrolls, list gets a viewport-relative cap.
+     Wide windows: the sticky palette bounds the height (see above)
+     and the list fills it, so no max-height cap here — capping it
+     (e.g. 560/720px) is what left the void on tall windows. */
+  max-height: calc(100vh - 340px);
+  max-height: calc(100dvh - 340px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a40 transparent;
+}
+
+@media (min-width: 880px) {
+  #projects {
+    min-height: 320px;
+    max-height: none;
+  }
+}
+
+#projects li {
+  margin: 1px 0;
+}
+
+#projects button {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 6px;
+  row-gap: 1px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  border-left-width: 2px;
+}
+
+#projects button::before {
+  content: " ";
+  grid-column: 1;
+  grid-row: 1;
+}
+
+#projects button .proj-name {
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#projects .proj-path {
+  grid-column: 2;
+  grid-row: 2;
+  color: var(--faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#projects button:hover {
+  background: var(--surface-2);
+}
+
+/* Soft per-folder tint: ~10-12% background over the surface so the
+   name (--text) keeps AAA contrast in dark mode. The left edge tints
+   the row; selection overrides it with TUI blue. */
+#projects li[data-base] button {
+  background: var(--base-bg, transparent);
+  border-left-color: var(--base-border, transparent);
+}
+
+#projects li[data-base] button:hover {
+  border-color: var(--base-border, var(--border));
+  border-left-color: var(--base-border, var(--border));
+}
+
+/* opencode-style active row: lifted background + side bar.
+   Keeps the base tint so the source folder stays visible. */
+#projects li.selected button {
+  background: var(--selected);
+  border-color: var(--border);
+  border-left-color: var(--selected-border);
+}
+
+#projects li[data-base].selected button {
+  background: var(--base-bg, var(--selected));
+  border-color: var(--base-border, var(--border));
+  border-left-color: var(--selected-border);
+}
+
+/* Group header ("by base folder" view): dot + label + count.
+   `presentation`: screen readers already get the folder in each aria-label. */
+#projects li.group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 3px;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+#projects li.group-header:first-child {
+  margin-top: 0;
+}
+
+#projects .group-label {
+  color: var(--base-accent, var(--muted));
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#projects .group-count {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+#projects li.selected button::before {
+  content: "▸";
+  color: var(--accent);
+}
+
+#projects li.selected .proj-name {
+  color: #fff;
+}
+
+#empty {
+  color: var(--faint);
+  font-size: 12px;
+  padding: 8px 12px 12px;
+  margin: 0;
+}
+
+#empty:not(:empty)::before {
+  content: "~/ ";
+  color: var(--faint);
+}
+
+/* ── sections as visually collapsible TUI panels */
+section.panel {
+  margin: 0;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+section.panel h2 {
+  font-size: 11px;
+  font-weight: 600;
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+}
+
+section.panel h2::before {
+  content: "─ ";
+  color: var(--faint);
+}
+
+section.panel .panel-body {
+  padding: 8px;
+}
+
+.hint {
+  color: var(--faint);
+  font-size: 11px;
+  margin: 4px 4px 8px;
+}
+
+#bases li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--base-bg, var(--surface-2));
+  border: 1px solid var(--base-border, var(--hairline));
+  border-radius: 5px;
+  padding: 5px 6px 5px 10px;
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+#bases .base-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+#bases button {
+  font-size: 11px;
+  border-color: var(--border);
+}
+
+#add-base,
+#save {
+  margin: 6px 2px 2px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+}
+
+#add-base:hover,
+#save:hover {
+  border-color: var(--accent);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.row.col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+
+#terminal,
+#sort-mode,
+#language,
+#theme {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12px;
+  max-width: 230px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+#terminal:focus-visible,
+#sort-mode:focus-visible,
+#language:focus-visible,
+#theme:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.field {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 9px;
+}
+
+.field:focus-within {
+  border-color: var(--accent);
+}
+
+#error {
+  grid-column: 1 / -1;
+  color: var(--danger);
+  font-size: 12px;
+  min-height: 20px;
+  white-space: pre-wrap;
+  margin: 0 2px;
+  padding-left: 14px;
+  position: relative;
+}
+
+#error:not(:empty)::before {
+  content: "✕";
+  position: absolute;
+  left: 0;
+}
+
+/* ── fixed TUI-style statusbar ─────────────────── */
+#statusbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 12px;
+  background: rgba(10, 10, 11, 0.92);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--hairline);
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+#statusbar kbd {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--muted);
+  padding: 0 5px;
+  margin-right: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+#statusbar-version {
+  margin-left: auto;
+  color: var(--faint);
+}
+
+#statusbar-version:empty {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  #app {
+    padding: 8px 8px 48px;
+  }
+
+  #statusbar .hide-sm {
+    display: none;
+  }
+
+  #terminal,
+  #sort-mode,
+  #language,
+  #theme {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+
+  #header-actions {
+    flex-wrap: wrap;
+  }
+}
+
+/* Forced high contrast: without the translucent tint, rows fall back
+   to the system background. */
+@media (forced-colors: active) {
+  #projects li[data-base] button,
+  #projects li[data-base].selected button,
+  #bases li {
+    background: Canvas;
+  }
+}
+
+/* Stronger contrast request: thicker focus ring on every theme so the
+   focus indicator stays unmistakable (never color-only: the ring plus the
+   row marker/label carry the signal together). */
+@media (prefers-contrast: more) {
+  button:focus-visible,
+  #terminal:focus-visible,
+  #sort-mode:focus-visible,
+  #language:focus-visible,
+  #theme:focus-visible {
+    outline-width: 2px;
+  }
+}
