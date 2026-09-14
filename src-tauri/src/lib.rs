@@ -14,7 +14,8 @@ mod terminal;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::image::Image;
+use tauri::menu::{IconMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -38,6 +39,72 @@ pub struct AppState {
 /// Max projects in the menu-bar menu. The window has no limit; the menu is
 /// capped so it stays usable.
 const MAX_TRAY_PROJECTS: usize = 15;
+
+/// Mid-tone accents for tray color dots, matching the frontend dark
+/// `BASE_PALETTE` accents in `src/lib/model.ts` (same slot order). The tones
+/// stay legible on light, dark, and highlighted-blue menu rows, so the dots
+/// are never set as template images (they must keep their color).
+const TRAY_DOT_ACCENTS: [(u8, u8, u8); 8] = [
+    (0x7a, 0xa9, 0xff),
+    (0x6f, 0xd3, 0xc6),
+    (0x8b, 0xd4, 0x9b),
+    (0xe8, 0xc3, 0x7e),
+    (0xeb, 0xa0, 0x6a),
+    (0xec, 0x93, 0xb8),
+    (0xb3, 0xa1, 0xff),
+    (0x82, 0xc2, 0xea),
+];
+
+/// Tray dot icon size in pixels. macOS renders menu images at 18pt, so 36px
+/// is a sharp @2x asset on Retina displays with padding around the dot.
+const TRAY_DOT_SIZE: u32 = 36;
+
+/// Stable palette index for a base folder (FNV-1a over UTF-16 code units).
+/// Mirrors `baseColorIndex()` in `src/lib/model.ts`: the same base always
+/// maps to the same slot, so tray dots match the window colors without
+/// passing hex values from the frontend.
+fn base_color_index(base: &str) -> usize {
+    let mut hash: u32 = 2166136261;
+    for unit in base.encode_utf16() {
+        hash ^= u32::from(unit);
+        hash = hash.wrapping_mul(16777619);
+    }
+    (hash as usize) % TRAY_DOT_ACCENTS.len()
+}
+
+/// Builds the RGBA buffer for one tray dot: a solid anti-aliased circle
+/// centered on a transparent background. Fully opaque core with a short
+/// feathered edge keeps the dot crisp on Retina and readable over the
+/// blue selection highlight.
+fn tray_dot_rgba(accent: (u8, u8, u8)) -> Vec<u8> {
+    let size = TRAY_DOT_SIZE as usize;
+    let center = TRAY_DOT_SIZE as f32 / 2.0 - 0.5;
+    // ~11px radius at 36px: a ~5.5pt dot with generous transparent padding.
+    let radius = TRAY_DOT_SIZE as f32 * 0.305;
+    let feather = 1.5;
+    let mut out = Vec::with_capacity(size * size * 4);
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let d = (dx * dx + dy * dy).sqrt();
+            let coverage =
+                1.0 - ((d - (radius - feather)) / (2.0 * feather)).clamp(0.0, 1.0);
+            let alpha = (coverage * 255.0).round() as u8;
+            out.extend_from_slice(&[accent.0, accent.1, accent.2, alpha]);
+        }
+    }
+    out
+}
+
+/// Generates the 8 cached dot `Image`s (one per palette slot) for a menu
+/// rebuild. Runtime generation avoids binary bloat from PNG assets.
+fn tray_dot_images() -> Vec<Image<'static>> {
+    TRAY_DOT_ACCENTS
+        .iter()
+        .map(|&accent| Image::new_owned(tray_dot_rgba(accent), TRAY_DOT_SIZE, TRAY_DOT_SIZE))
+        .collect()
+}
 
 /// macOS: LaunchAgent plist (`~/Library/LaunchAgents`) instead of an
 /// AppleScript login item. The plist passes CLI args through
@@ -159,9 +226,18 @@ pub(crate) fn refresh_tray(app: &AppHandle) {
             )?;
             menu.append(&empty)?;
         } else {
+            // One cached dot per palette slot; rows share the image matching
+            // their base folder so the tray mirrors the window colors.
+            let dots = tray_dot_images();
             for (i, p) in found.iter().take(MAX_TRAY_PROJECTS).enumerate() {
-                let item =
-                    MenuItem::with_id(app, format!("open-{i}"), p.name.clone(), true, None::<&str>)?;
+                let item = IconMenuItem::with_id(
+                    app,
+                    format!("open-{i}"),
+                    p.name.clone(),
+                    true,
+                    Some(dots[base_color_index(&p.base)].clone()),
+                    None::<&str>,
+                )?;
                 menu.append(&item)?;
             }
             if found.len() > MAX_TRAY_PROJECTS {
@@ -346,4 +422,35 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_color_index_matches_frontend_palette() {
+        // Expected slots computed with `baseColorIndex()` in src/lib/model.ts.
+        assert_eq!(base_color_index("/Users/you/Programs"), 6);
+        assert_eq!(base_color_index("/a"), 5);
+        assert_eq!(base_color_index("/b"), 4);
+        assert_eq!(base_color_index("Programs"), 0);
+        assert_eq!(base_color_index("/Users/cayetano/Documents/Programs"), 4);
+        // Same base is stable; palette has 8 slots.
+        assert_eq!(base_color_index("/a"), base_color_index("/a"));
+        assert!(base_color_index("anything") < TRAY_DOT_ACCENTS.len());
+    }
+
+    #[test]
+    fn tray_dot_rgba_is_padded_transparent_with_opaque_core() {
+        let rgba = tray_dot_rgba((0x7a, 0xa9, 0xff));
+        let size = TRAY_DOT_SIZE as usize;
+        assert_eq!(rgba.len(), size * size * 4);
+        // Corners stay fully transparent (padding around the dot).
+        assert_eq!(rgba[3], 0);
+        // Center pixel is the opaque accent color.
+        let cx = size / 2;
+        let off = (cx * size + cx) * 4;
+        assert_eq!(&rgba[off..off + 4], &[0x7a, 0xa9, 0xff, 0xff]);
+    }
 }
