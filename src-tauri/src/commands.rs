@@ -39,6 +39,14 @@ pub fn get_config(state: State<'_, AppState>) -> ConfigPayload {
     ConfigPayload::from(&*state.config.lock().unwrap())
 }
 
+/// Whether this process was started by the OS at login (LaunchAgent
+/// `--autostart`). The frontend uses it to suppress the update check until
+/// the first manual show, so no modal pops over the login session.
+#[tauri::command]
+pub fn was_autostart_launch(state: State<'_, AppState>) -> bool {
+    state.autostart_launch
+}
+
 /// Current projects (hot scan of the base folders), ordered by the stored
 /// `sortMode` (`name` or `base`).
 #[tauri::command]

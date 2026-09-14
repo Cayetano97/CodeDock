@@ -324,6 +324,10 @@ let pendingUpdateVersion: string | null = null;
 let pendingUpdateHandle: UpdateHandle | null = null;
 let deferredUpdateHandle: UpdateHandle | null = null;
 let updateDownloading = false;
+// True after a login (hidden) start until the first manual show: automatic
+// checks stay dormant so no update modal pops over the login session. The
+// Settings manual check bypasses this gate.
+let updatesPausedForAutostart = false;
 const updateScheduler = createUpdateScheduler();
 
 /** localStorage or null (private mode never breaks the checker). */
@@ -466,6 +470,7 @@ async function installPendingUpdate(): Promise<void> {
 async function checkForUpdates(opts: { manual?: boolean } = {}): Promise<unknown> {
   const manual = opts.manual === true;
   try {
+    if (!manual && updatesPausedForAutostart) return null;
     if (!manual && !updateScheduler.canCheckNow()) return null;
     const found = (await check()) as unknown as UpdateHandle | null;
     updateScheduler.markChecked();
@@ -1155,15 +1160,26 @@ async function init(): Promise<void> {
     });
     // In-app updates: check on start, on window-show (5-minute throttle)
     // and every 6 hours while running. All throttled inside
-    // `checkForUpdates`; every failure degrades silently.
-    void checkForUpdates();
+    // `checkForUpdates`; every failure degrades silently. After a login
+    // (hidden) start the automatic checks wait for the first manual show;
+    // the first focus/visibility event arms them (see listeners below).
+    try {
+      updatesPausedForAutostart = await invoke<boolean>("was_autostart_launch");
+    } catch {
+      updatesPausedForAutostart = false;
+    }
+    if (!updatesPausedForAutostart) void checkForUpdates();
     window.addEventListener("focus", () => {
+      updatesPausedForAutostart = false;
       void checkForUpdates();
     });
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) void checkForUpdates();
+      if (document.hidden) return;
+      updatesPausedForAutostart = false;
+      void checkForUpdates();
     });
     window.setInterval(() => {
+      if (updatesPausedForAutostart) return;
       void checkForUpdates();
     }, UPDATE_PERIODIC_CHECK_INTERVAL_MS);
   } catch (e) {
