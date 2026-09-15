@@ -134,13 +134,23 @@ fn is_autostart_arg(arg: &str) -> bool {
 
 fn show_main(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
-        // Never maximized: a maximized state discards the centered rect on
-        // macOS, so restore a stale one before centering.
-        if win.is_maximized().unwrap_or(false) {
-            let _ = win.unmaximize();
+        // A minimized window ignores `show()` on macOS/Wry: it stays
+        // minimized with no Dock entry to restore it (menu-bar-only app),
+        // so it looked like "always opens minimized". Restore first.
+        if win.is_minimized().unwrap_or(false) {
+            let _ = win.unminimize();
         }
-        let _ = win.center();
+        // No `unmaximize()` here: a zoomed/maximized window is a state the
+        // user left on purpose (e.g. double-click on the title bar,
+        // Rectangle maximize) and `window-state` restores it via MAXIMIZED.
+        // Forcing unmaximize on every show destroyed it both in-session
+        // (hide to tray and back) and across restarts.
+        let _ = win.show();
+        // No `center()` here: the initial position comes from
+        // `tauri.conf.json` (`center: true`) on first run and from
+        // `window-state` (SIZE|POSITION|MAXIMIZED) afterwards. Centering on
+        // every show discarded where the user left the window (tray
+        // hide/show, second instance, manual relaunch).
         let _ = win.set_focus();
     }
 }
@@ -368,6 +378,28 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Remembers SIZE|POSITION|MAXIMIZED across restarts (official
+        // window-state plugin). VISIBLE is deliberately excluded: visibility
+        // is owned by the LaunchAgent `--autostart` logic below, so a login
+        // launch never pops the window. DECORATIONS never changes and
+        // FULLSCREEN is not a state this palette uses, so both stay out.
+        // MAXIMIZED matters: double-click on the title bar / Rectangle
+        // maximize sets `isZoomed` (= `is_maximized`), and the plugin
+        // deliberately does NOT overwrite the saved size while maximized —
+        // it stores `maximized: true` + the pre-zoom rect (`prev_x/prev_y`)
+        // and restores via `maximize()`. Without this flag the zoom state
+        // was silently dropped. `visible: false` in tauri.conf.json stays:
+        // first run centers hidden, then `show_main` shows it; later runs
+        // restore geometry before `show_main`.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .setup(|app| {
             // Always menu-bar only: no Dock icon, no Cmd+Tab entry.
             // In the installed .app this is covered by `LSUIElement`
@@ -397,12 +429,13 @@ pub fn run() {
             migrate_legacy_applescript_login_item(app.handle());
 
             if autostart_launch {
-                // Login launch: tray only. No show, no center, no focus steal.
+                // Login launch: tray only. No show, no focus steal. Position
+                // is still restored underneath for the next manual show.
                 if let Some(win) = app.get_webview_window("main") {
                     let _ = win.hide();
                 }
             } else {
-                // Manual launch: normal windowed, centered, focused.
+                // Manual launch: restored position (or centered first run).
                 show_main(app.handle());
             }
             Ok(())
