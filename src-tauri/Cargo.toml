@@ -1,6 +1,6 @@
 [package]
 name = "codedock"
-version = "0.1.0"
+version = "0.2.0"
 description = "Launch your projects in your terminal with opencode"
 authors = ["Cayetano97"]
 edition = "2021"
