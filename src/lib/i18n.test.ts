@@ -5,6 +5,7 @@ import {
   DEFAULT_LANGUAGE_SETTING,
   formatCount,
   formatGroupCount,
+  formatVisibilityStatus,
   I18N_KEYS,
   normalizeLanguage,
   normalizeLanguageSetting,
@@ -15,6 +16,7 @@ import {
   terminalHint,
   translate,
   versionAriaLabel,
+  visibilityToggleAriaLabel,
 } from "./i18n";
 
 describe("normalizeLanguage", () => {
@@ -134,5 +136,16 @@ describe("formatters", () => {
       expect(terminalHint("es", id)).not.toBe("");
     }
     expect(terminalHint("en", "unknown")).toBe("");
+  });
+
+  it("labels the visibility manager in both languages", () => {
+    expect(translate("en", "visibility.title")).not.toBe("");
+    expect(translate("es", "visibility.title")).not.toBe("");
+    expect(formatVisibilityStatus("en", 5, 7)).toBe("5 of 7 visible");
+    expect(formatVisibilityStatus("es", 5, 7)).toBe("5 de 7 visibles");
+    expect(visibilityToggleAriaLabel("en", "Demo", false)).toContain("Hide Demo");
+    expect(visibilityToggleAriaLabel("en", "Demo", true)).toContain("Show Demo");
+    expect(visibilityToggleAriaLabel("es", "Demo", false)).toContain("Ocultar Demo");
+    expect(visibilityToggleAriaLabel("es", "Demo", true)).toContain("Mostrar Demo");
   });
 });

@@ -255,6 +255,7 @@ body {
     grid-template-columns: minmax(0, 1.65fr) minmax(300px, 380px);
     grid-template-areas:
       "palette bases"
+      "palette visibility"
       "palette settings"
       "error error";
     /* Fill the viewport height so tall/maximized windows have no void:
@@ -285,6 +286,10 @@ body {
     grid-area: bases;
   }
 
+  #panel-visibility {
+    grid-area: visibility;
+  }
+
   #panel-settings {
     grid-area: settings;
   }
@@ -312,13 +317,16 @@ body {
 
 /* Ultrawide: stop stacking the side panels and lay all three cards
    in one row. Uses horizontal room (HIG "leverage large displays")
-   and keeps bases + settings visible without scrolling past each other. */
+   and keeps bases + settings visible without scrolling past each other.
+   The visibility panel shares the middle column with bases (stacked),
+   while settings keeps its own column. */
 @media (min-width: 1560px) {
   #app {
     max-width: 1680px;
     grid-template-columns: minmax(0, 1.7fr) minmax(280px, 340px) minmax(320px, 400px);
     grid-template-areas:
       "palette bases settings"
+      "palette visibility settings"
       "error error error";
   }
 }
@@ -655,6 +663,115 @@ section.panel .panel-body {
   border-color: var(--border);
 }
 
+/* ── visible-projects panel ───────────────────
+   Grouped checkbox list (one group per base folder): the header carries
+   the folder tint + label + per-group All/None, rows are label+checkbox.
+   Mirrors the project list tints so the source folder stays visible. */
+#visibility-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 2px 2px 8px;
+}
+
+#visibility-actions button {
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+#visibility-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+#visibility-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#visibility-status {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+#visibility-list {
+  max-height: 260px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a40 transparent;
+}
+
+#visibility-list li.vis-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px 4px;
+  font-size: 11px;
+}
+
+#visibility-list .vis-group-label {
+  color: var(--base-accent, var(--muted));
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+#visibility-list .vis-group-btn {
+  font-size: 10px;
+  padding: 2px 6px;
+  color: var(--muted);
+}
+
+#visibility-list li.vis-row label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--base-bg, var(--surface-2));
+  border: 1px solid var(--base-border, var(--hairline));
+  border-radius: 5px;
+  padding: 5px 8px 5px 10px;
+  margin: 4px 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#visibility-list li.vis-row label:hover {
+  border-color: var(--accent);
+}
+
+#visibility-list li.vis-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+#visibility-list .vis-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+#visibility-list li.vis-row.is-off .vis-name {
+  color: var(--faint);
+  text-decoration: line-through;
+}
+
+#visibility-empty:not([hidden]) {
+  display: block;
+}
+
 #add-base,
 #save {
   margin: 6px 2px 2px;
@@ -910,7 +1027,8 @@ section.panel .panel-body {
 @media (forced-colors: active) {
   #projects li[data-base] button,
   #projects li[data-base].selected button,
-  #bases li {
+  #bases li,
+  #visibility-list li.vis-row label {
     background: Canvas;
   }
 }

@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyDisabledFilter,
   BASE_PALETTE,
   baseColorFor,
   baseColorIndex,
   baseLabel,
   clampIndex,
+  disableAllProjects,
+  enableAllProjects,
   filterProjects,
   getVisibleProjects,
   groupProjectsByBase,
+  isProjectDisabled,
   moveSelection,
   normalizeBaseDir,
+  normalizeProjectPath,
   normalizeQuery,
   normalizeSortMode,
+  sanitizeDisabledProjects,
   sortProjects,
+  toggleProjectDisabled,
   type Project,
 } from "./model";
 
@@ -203,5 +210,49 @@ describe("visible projects with an active filter", () => {
       "QuickSpot",
       "SonicaStudio",
     ]);
+  });
+});
+
+describe("disabled projects (visibility manager)", () => {
+  it("normalizes project paths like base dirs", () => {
+    expect(normalizeProjectPath("/a/Demo/")).toBe("/a/Demo");
+    expect(normalizeProjectPath("  /a/Demo  ")).toBe("/a/Demo");
+    expect(normalizeProjectPath("/")).toBe("/");
+  });
+
+  it("sanitizes the disabled list (trims, dedupes, drops empties and non-strings)", () => {
+    expect(sanitizeDisabledProjects(undefined)).toEqual([]);
+    expect(sanitizeDisabledProjects("nope")).toEqual([]);
+    expect(
+      sanitizeDisabledProjects(["/a/Old/", "/a/Old", "  ", "/b/Demo", 42, null]),
+    ).toEqual(["/a/Old", "/b/Demo"]);
+  });
+
+  it("matches disabled entries with trailing-slash tolerance", () => {
+    expect(isProjectDisabled("/a/Old", ["/a/Old/"])).toBe(true);
+    expect(isProjectDisabled("/a/Old/", ["/a/Old"])).toBe(true);
+    expect(isProjectDisabled("/a/Keep", ["/a/Old"])).toBe(false);
+  });
+
+  it("filters disabled projects without mutating the input", () => {
+    const all = [project("Keep"), project("Old")];
+    const filtered = applyDisabledFilter(all, ["/Users/you/Programs/Old"]);
+    expect(filtered.map((p) => p.name)).toEqual(["Keep"]);
+    expect(all.length).toBe(2);
+    expect(applyDisabledFilter(all, []).map((p) => p.name)).toEqual(["Keep", "Old"]);
+  });
+
+  it("toggles one project in and out", () => {
+    expect(toggleProjectDisabled([], "/a/Demo/")).toEqual(["/a/Demo"]);
+    expect(toggleProjectDisabled(["/a/Demo"], "/a/Demo")).toEqual([]);
+    expect(toggleProjectDisabled(["/a/Demo"], "  ")).toEqual(["/a/Demo"]);
+  });
+
+  it("selects all (enable) and none (disable) over the current scan", () => {
+    const all = [project("A", "/a"), project("B", "/b")];
+    expect(enableAllProjects()).toEqual([]);
+    // Disabling everything prunes stale entries: only current paths remain.
+    expect(disableAllProjects(all)).toEqual(["/a/A", "/b/B"]);
+    expect(disableAllProjects([])).toEqual([]);
   });
 });

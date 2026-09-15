@@ -23,6 +23,74 @@ export function normalizeBaseDir(dir: string): string {
   return trimmed;
 }
 
+/**
+ * Normalizes a project path for the disabled list: same rule as bases, so
+ * `/a/Demo` and `/a/Demo/` count as the same project (mirrors the backend).
+ */
+export function normalizeProjectPath(path: string): string {
+  return normalizeBaseDir(path);
+}
+
+/**
+ * Cleans a disabled-project list: trims, drops trailing `/`, removes empty
+ * and duplicated entries. Stale entries (no longer on disk) are kept: they
+ * match nothing and avoid re-enabling a temporarily missing folder.
+ */
+export function sanitizeDisabledProjects(paths: unknown): string[] {
+  if (!Array.isArray(paths)) return [];
+  const out: string[] = [];
+  for (const item of paths) {
+    if (typeof item !== "string") continue;
+    const normalized = normalizeProjectPath(item);
+    if (normalized === "" || out.includes(normalized)) continue;
+    out.push(normalized);
+  }
+  return out;
+}
+
+/** Whether a project path is in the disabled list (hidden everywhere). */
+export function isProjectDisabled(projectPath: string, disabled: readonly string[]): boolean {
+  const normalized = normalizeProjectPath(projectPath);
+  return disabled.some((d) => normalizeProjectPath(d) === normalized);
+}
+
+/** Removes disabled projects from a list (does not mutate the input). */
+export function applyDisabledFilter(projects: Project[], disabled: readonly string[]): Project[] {
+  if (disabled.length === 0) return [...projects];
+  return projects.filter((p) => !isProjectDisabled(p.path, disabled));
+}
+
+/**
+ * Toggles one project in the disabled list: returns a new array.
+ * Disabling adds the normalized path; enabling removes it.
+ */
+export function toggleProjectDisabled(disabled: readonly string[], projectPath: string): string[] {
+  const normalized = normalizeProjectPath(projectPath);
+  if (normalized === "") return [...disabled];
+  if (isProjectDisabled(normalized, disabled)) {
+    return disabled.filter((d) => normalizeProjectPath(d) !== normalized);
+  }
+  return [...disabled, normalized];
+}
+
+/** Enables every project: the disabled list becomes empty (prunes stale). */
+export function enableAllProjects(): string[] {
+  return [];
+}
+
+/**
+ * Disables every currently known project: returns all their normalized
+ * paths (prunes stale entries for ones that no longer exist).
+ */
+export function disableAllProjects(projects: readonly Project[]): string[] {
+  const out: string[] = [];
+  for (const p of projects) {
+    const normalized = normalizeProjectPath(p.path);
+    if (normalized !== "" && !out.includes(normalized)) out.push(normalized);
+  }
+  return out;
+}
+
 /** How projects are ordered: global alphabetical or grouped by base folder. */
 export type SortMode = "name" | "base";
 

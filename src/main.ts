@@ -7,24 +7,33 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import {
   formatCount,
   formatGroupCount,
+  formatVisibilityStatus,
   normalizeLanguageSetting,
   projectAriaLabel,
   removeBaseAriaLabel,
   resolveLanguage,
   terminalHint,
   translate,
+  visibilityToggleAriaLabel,
   type I18nKey,
   type Language,
   type LanguageSetting,
 } from "./lib/i18n";
 import {
+  applyDisabledFilter,
   baseColorFor,
   baseLabel,
   clampIndex,
+  disableAllProjects,
   getVisibleProjects,
+  isProjectDisabled,
   moveSelection,
   normalizeBaseDir,
+  normalizeProjectPath,
   normalizeSortMode,
+  sanitizeDisabledProjects,
+  sortProjects,
+  toggleProjectDisabled,
   type Project,
   type SortMode,
 } from "./lib/model";
@@ -59,6 +68,7 @@ export { UPDATE_MIN_CHECK_INTERVAL_MS, UPDATE_PERIODIC_CHECK_INTERVAL_MS };
 
 interface Config {
   baseDirs: string[];
+  disabledProjects: string[];
   opencodeBin: string | null;
   terminal: string;
   sortMode: SortMode;
@@ -74,6 +84,7 @@ interface TerminalInfo {
 
 let config: Config = {
   baseDirs: [],
+  disabledProjects: [],
   opencodeBin: null,
   terminal: "ghostty",
   sortMode: "name",
@@ -87,6 +98,7 @@ let themeSetting: ThemeSetting = "auto";
 let effectiveTheme: ThemeId = "codedock-dark";
 let terminals: TerminalInfo[] = [];
 let projects: Project[] = [];
+let allProjects: Project[] = [];
 let visible: Project[] = [];
 let selected = -1;
 let errorTimer = 0;
@@ -101,6 +113,11 @@ const list = document.querySelector<HTMLElement>("#projects")!;
 const empty = document.querySelector<HTMLElement>("#empty")!;
 const bases = document.querySelector<HTMLElement>("#bases")!;
 const addBase = document.querySelector<HTMLButtonElement>("#add-base")!;
+const visibilityList = document.querySelector<HTMLElement>("#visibility-list")!;
+const visibilityAll = document.querySelector<HTMLButtonElement>("#visibility-all")!;
+const visibilityNone = document.querySelector<HTMLButtonElement>("#visibility-none")!;
+const visibilityStatus = document.querySelector<HTMLElement>("#visibility-status")!;
+const visibilityEmpty = document.querySelector<HTMLElement>("#visibility-empty")!;
 const autostartToggle = document.querySelector<HTMLInputElement>("#autostart")!;
 const terminalSelect = document.querySelector<HTMLSelectElement>("#terminal")!;
 const terminalHintEl = document.querySelector<HTMLElement>("#terminal-hint")!;
@@ -202,6 +219,7 @@ function applyI18n(): void {
   document.documentElement.lang = lang;
   document.querySelector("#section-projects")?.setAttribute("aria-label", t("projects.sectionAria"));
   document.querySelector("#panel-bases")?.setAttribute("aria-label", t("bases.sectionAria"));
+  document.querySelector("#panel-visibility")?.setAttribute("aria-label", t("visibility.sectionAria"));
   document.querySelector("#panel-settings")?.setAttribute("aria-label", t("settings.sectionAria"));
 
   const setText = (selector: string, key: I18nKey): void => {
@@ -211,6 +229,10 @@ function applyI18n(): void {
   setText("#bases-title", "bases.title");
   setText("#bases-hint", "bases.hint");
   setText("#add-base", "bases.add");
+  setText("#visibility-title", "visibility.title");
+  setText("#visibility-hint", "visibility.hint");
+  setText("#visibility-all", "visibility.selectAll");
+  setText("#visibility-none", "visibility.selectNone");
   setText("#settings-title", "settings.title");
   setText("#language-label", "settings.language");
   setText("#theme-label", "settings.theme");
@@ -237,6 +259,7 @@ function applyI18n(): void {
   search.setAttribute("aria-label", t("search.ariaLabel"));
   list.setAttribute("aria-label", t("projects.listAria"));
   bases.setAttribute("aria-label", t("bases.listAria"));
+  visibilityList.setAttribute("aria-label", t("visibility.listAria"));
   terminalSelect.setAttribute("aria-label", t("settings.terminalAria"));
   sortSelect.setAttribute("aria-label", t("settings.sortAria"));
   languageSelect.setAttribute("aria-label", t("settings.languageAria"));
@@ -274,6 +297,9 @@ function applyI18n(): void {
 
   // Update checker row + popup (progress/error slots keep their state and
   // are only re-labeled when idle).
+  // In `applyI18n` the visibility strings are painted; the dynamic status
+  // (`X of Y visible`) and group rows are re-rendered by the caller via
+  // `renderVisibility` right after (same as bases/terminal options).
   if (updateLabel) updateLabel.textContent = t("update.checkNow");
   if (checkUpdatesBtn) checkUpdatesBtn.textContent = t("update.checkNow");
   if (updateTitle) updateTitle.textContent = t("update.title");
@@ -369,15 +395,16 @@ function setUpdateControlsLocked(locked: boolean): void {
 /**
  * Whether the prompt must stay hidden right now. CodeDock panels are always
  * laid out (no modal panels), so "open" means the user is working inside
- * Settings (`#panel-settings`) or the folder Actions panel (`#panel-bases`,
- * add/remove folder): focus inside either defers the prompt until close.
+ * Settings (`#panel-settings`) or the folder Actions panels (`#panel-bases`
+ * add/remove folder, `#panel-visibility` show/hide projects): focus inside
+ * any of them defers the prompt until close.
  */
 function updatePanelState(): { settingsOpen: boolean; actionsOpen: boolean } {
   try {
     const active = document.activeElement as HTMLElement | null;
     return {
       settingsOpen: Boolean(active?.closest?.("#panel-settings")),
-      actionsOpen: Boolean(active?.closest?.("#panel-bases")),
+      actionsOpen: Boolean(active?.closest?.("#panel-bases, #panel-visibility")),
     };
   } catch {
     return { settingsOpen: false, actionsOpen: false };
@@ -770,6 +797,144 @@ function renderBases(): void {
   });
 }
 
+/**
+ * Renders the visibility manager: every scanned project grouped by base
+ * folder with a checkbox (checked = visible in the list and the menu bar).
+ * Group headers carry per-folder All/None for quick bulk actions; the top
+ * row has the global Select all / Select none the user asked for.
+ * Pure DOM paint from `allProjects` + `config.disabledProjects`.
+ */
+function renderVisibility(): void {
+  const disabled = sanitizeDisabledProjects(config.disabledProjects);
+  const ordered = sortProjects([...allProjects], "base");
+  visibilityList.replaceChildren();
+
+  const total = ordered.length;
+  const enabledCount = ordered.filter((p) => !isProjectDisabled(p.path, disabled)).length;
+
+  if (visibilityStatus) {
+    visibilityStatus.textContent =
+      total === 0 ? "" : formatVisibilityStatus(lang, enabledCount, total);
+  }
+  if (visibilityEmpty) {
+    visibilityEmpty.textContent = total === 0 ? t("visibility.empty") : "";
+    visibilityEmpty.hidden = total !== 0;
+  }
+  const hasProjects = total > 0;
+  visibilityAll.disabled = !hasProjects || enabledCount === total;
+  visibilityNone.disabled = !hasProjects || enabledCount === 0;
+
+  let lastBase: string | null = null;
+  for (const p of ordered) {
+    if (p.base !== lastBase) {
+      lastBase = p.base;
+      const groupItems = ordered.filter((v) => v.base === p.base);
+      const groupEnabled = groupItems.filter((v) => !isProjectDisabled(v.path, disabled)).length;
+      const header = document.createElement("li");
+      header.className = "vis-group-header";
+      header.setAttribute("role", "presentation");
+      paintBaseTint(header, p.base);
+      const label = document.createElement("span");
+      label.className = "vis-group-label";
+      label.textContent = `${baseLabel(p.base)} · ${String(groupEnabled)}/${String(groupItems.length)}`;
+      label.title = p.base;
+      const allBtn = document.createElement("button");
+      allBtn.type = "button";
+      allBtn.className = "vis-group-btn";
+      allBtn.textContent = t("visibility.groupSelectAll");
+      allBtn.disabled = groupEnabled === groupItems.length;
+      allBtn.setAttribute("aria-label", `${t("visibility.selectAll")}: ${baseLabel(p.base)}`);
+      allBtn.addEventListener("click", () => void setGroupVisibility(p.base, true));
+      const noneBtn = document.createElement("button");
+      noneBtn.type = "button";
+      noneBtn.className = "vis-group-btn";
+      noneBtn.textContent = t("visibility.groupSelectNone");
+      noneBtn.disabled = groupEnabled === 0;
+      noneBtn.setAttribute("aria-label", `${t("visibility.selectNone")}: ${baseLabel(p.base)}`);
+      noneBtn.addEventListener("click", () => void setGroupVisibility(p.base, false));
+      header.append(label, allBtn, noneBtn);
+      visibilityList.appendChild(header);
+    }
+    const off = isProjectDisabled(p.path, disabled);
+    const li = document.createElement("li");
+    li.className = off ? "vis-row is-off" : "vis-row";
+    paintBaseTint(li, p.base);
+    const labelEl = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !off;
+    box.setAttribute("aria-label", visibilityToggleAriaLabel(lang, p.name, off));
+    box.title = p.path;
+    box.addEventListener("change", () => void toggleProjectVisibility(p.path));
+    const name = document.createElement("span");
+    name.className = "vis-name";
+    name.textContent = p.name;
+    name.title = p.path;
+    labelEl.append(box, name);
+    li.appendChild(labelEl);
+    visibilityList.appendChild(li);
+  }
+}
+
+/** Applies the disabled list locally for instant feedback (no backend yet). */
+function applyLocalVisibility(): void {
+  projects = sortProjects(applyDisabledFilter(allProjects, config.disabledProjects), config.sortMode);
+  renderProjects();
+  renderVisibility();
+}
+
+/** Enables/disables one project with optimistic paint + backend revert. */
+async function toggleProjectVisibility(projectPath: string): Promise<void> {
+  const prev = [...config.disabledProjects];
+  config.disabledProjects = toggleProjectDisabled(config.disabledProjects, projectPath);
+  applyLocalVisibility();
+  try {
+    await saveAll();
+  } catch (e) {
+    config.disabledProjects = prev;
+    applyLocalVisibility();
+    showError(typeof e === "string" ? e : String(e));
+  }
+}
+
+/** Global Select all (enable everything, pruning stale) / Select none. */
+async function setAllVisibility(enabled: boolean): Promise<void> {
+  const prev = [...config.disabledProjects];
+  config.disabledProjects = enabled ? [] : disableAllProjects(allProjects);
+  applyLocalVisibility();
+  try {
+    await saveAll();
+  } catch (e) {
+    config.disabledProjects = prev;
+    applyLocalVisibility();
+    showError(typeof e === "string" ? e : String(e));
+  }
+}
+
+/** Per-folder All/None inside the visibility manager. */
+async function setGroupVisibility(base: string, enabled: boolean): Promise<void> {
+  const prev = [...config.disabledProjects];
+  const groupPaths = allProjects
+    .filter((p) => p.base === base)
+    .map((p) => normalizeProjectPath(p.path))
+    .filter((p) => p !== "");
+  const current = new Set(sanitizeDisabledProjects(config.disabledProjects));
+  if (enabled) {
+    for (const p of groupPaths) current.delete(p);
+  } else {
+    for (const p of groupPaths) current.add(p);
+  }
+  config.disabledProjects = [...current];
+  applyLocalVisibility();
+  try {
+    await saveAll();
+  } catch (e) {
+    config.disabledProjects = prev;
+    applyLocalVisibility();
+    showError(typeof e === "string" ? e : String(e));
+  }
+}
+
 function syncSettings(): void {
   sortSelect.value = config.sortMode;
   themeSelect.value = themeSetting;
@@ -796,8 +961,27 @@ async function syncAutostart(): Promise<void> {
 }
 
 async function refreshProjects(): Promise<void> {
-  projects = await invoke<Project[]>("list_projects");
+  const [visibleProjects, everyProject] = await Promise.all([
+    invoke<Project[]>("list_projects"),
+    invoke<Project[]>("list_all_projects").catch(() => null),
+  ]);
+  projects = visibleProjects;
+  // The manager needs the unfiltered scan (disabled included) so hidden
+  // projects can be re-enabled. Old backends lack the command: fall back
+  // to the visible list so the window never breaks.
+  allProjects = everyProject ?? [...visibleProjects];
   renderProjects();
+  renderVisibility();
+}
+
+/** Refreshes only the visibility manager (unfiltered scan for re-enable). */
+async function refreshVisibility(): Promise<void> {
+  try {
+    allProjects = await invoke<Project[]>("list_all_projects");
+  } catch {
+    allProjects = [...projects];
+  }
+  renderVisibility();
 }
 
 // Saves are chained serially: this keeps two concurrent `saveAll` calls
@@ -818,6 +1002,7 @@ async function saveAll(): Promise<void> {
   // keep their own bases and the last one wins with the freshest snapshot,
   // without losing just-added folders.
   const baseDirs = [...config.baseDirs];
+  const disabledProjects = [...config.disabledProjects];
   const opencodeBinValue =
     opencodeBin.value.trim() === "" ? null : opencodeBin.value.trim();
   const terminal = terminalSelect.value;
@@ -827,6 +1012,7 @@ async function saveAll(): Promise<void> {
   return enqueueSave(async () => {
     config = await invoke<Config>("save_config", {
       baseDirs,
+      disabledProjects,
       opencodeBin: opencodeBinValue,
       terminal,
       sortMode,
@@ -836,6 +1022,7 @@ async function saveAll(): Promise<void> {
     // The backend normalizes: apply the canonical mode and language to the UI.
     // An explicit "en"/"es" is kept as-is; "auto" follows the system.
     config.sortMode = normalizeSortMode(config.sortMode);
+    config.disabledProjects = sanitizeDisabledProjects(config.disabledProjects);
     applyLanguageSetting(config.language);
     applyThemeSetting(config.theme);
     applyI18n();
@@ -984,6 +1171,7 @@ themeSelect.addEventListener("change", () => {
   themeSelect.value = themeSetting;
   renderProjects();
   renderBases();
+  renderVisibility();
   void (async () => {
     try {
       await saveAll();
@@ -993,6 +1181,7 @@ themeSelect.addEventListener("change", () => {
       themeSelect.value = prevSetting;
       renderProjects();
       renderBases();
+      renderVisibility();
       showError(typeof e === "string" ? e : String(e));
     }
   })();
@@ -1008,6 +1197,7 @@ function watchSystemScheme(): void {
       applyThemeSetting("auto");
       renderProjects();
       renderBases();
+      renderVisibility();
     });
   } catch {
     // No matchMedia: `auto` simply stays on the boot resolution.
@@ -1028,6 +1218,7 @@ languageSelect.addEventListener("change", () => {
   renderTerminalOptions();
   renderProjects();
   renderBases();
+  renderVisibility();
   void (async () => {
     try {
       await saveAll();
@@ -1041,6 +1232,7 @@ languageSelect.addEventListener("change", () => {
       renderTerminalOptions();
       renderProjects();
       renderBases();
+      renderVisibility();
       showError(typeof e === "string" ? e : String(e));
     }
   })();
@@ -1103,12 +1295,24 @@ document.addEventListener("keydown", (e) => {
 reload.addEventListener("click", () => {
   void (async () => {
     try {
+      // `refresh` rescans, rebuilds the tray menu and emits
+      // `projects-changed`; the manager is refreshed right after so hidden
+      // projects stay listed for re-enabling.
       projects = await invoke<Project[]>("refresh");
       renderProjects();
+      await refreshVisibility();
     } catch (e) {
       showError(typeof e === "string" ? e : String(e));
     }
   })();
+});
+
+visibilityAll.addEventListener("click", () => {
+  void setAllVisibility(true);
+});
+
+visibilityNone.addEventListener("click", () => {
+  void setAllVisibility(false);
 });
 
 quit.addEventListener("click", () => {
@@ -1126,12 +1330,19 @@ async function init(): Promise<void> {
       invoke<Config>("get_config"),
       invoke<TerminalInfo[]>("list_terminals"),
     ]);
-    // Old configs lack `sortMode` (falls back to "name", the historic order).
+    // Old configs lack `sortMode` (falls back to "name", the historic order)
+    // and `disabledProjects` (falls back to empty = everything visible).
     // `language` is a stored setting: "auto" (default, follows the system
     // language with an English fallback) or an explicit "en"/"es" that wins.
     // `theme` is the same shape for color: "auto" (default, follows the OS
     // scheme) or one of the 8 curated ids; unknown values fall back to "auto".
-    config = { ...cfg, sortMode: normalizeSortMode(cfg.sortMode) };
+    config = {
+      ...cfg,
+      sortMode: normalizeSortMode(cfg.sortMode),
+      disabledProjects: sanitizeDisabledProjects(
+        (cfg as Partial<Config>).disabledProjects,
+      ),
+    };
     applyLanguageSetting(cfg.language);
     applyThemeSetting((cfg as Config).theme);
     terminals = terms;
@@ -1139,18 +1350,21 @@ async function init(): Promise<void> {
     renderTerminalOptions();
     syncSettings();
     renderBases();
+    renderVisibility();
     watchSystemScheme();
     await refreshProjects();
     // OS login-item state is independent of the config file: refresh after
     // boot so the checkbox shows the real state (like QuickSpot).
     void syncAutostart();
     // The backend emits `projects-changed` after `save_config` / `refresh` /
-    // tray reload with the freshly scanned list: the payload is applied
-    // directly for an immediate refresh (no second invoke).
+    // tray reload with the freshly scanned (filtered) list: the payload is
+    // applied directly for an immediate refresh, and the manager is
+    // re-scanned so hidden projects stay listed for re-enabling.
     await listen<Project[]>("projects-changed", (event) => {
       if (Array.isArray(event.payload)) {
         projects = event.payload;
         renderProjects();
+        void refreshVisibility();
       } else {
         void refreshProjects();
       }

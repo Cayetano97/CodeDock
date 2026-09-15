@@ -68,6 +68,8 @@ pub fn normalize_theme(raw: Option<&str>) -> String {
 pub struct Config {
     #[serde(default)]
     pub base_dirs: Vec<String>,
+    #[serde(default)]
+    pub disabled_projects: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_bin: Option<String>,
     #[serde(default = "default_terminal")]
@@ -84,6 +86,7 @@ impl Config {
     pub fn with_defaults() -> Self {
         Config {
             base_dirs: default_base_dirs(),
+            disabled_projects: Vec::new(),
             opencode_bin: None,
             terminal: default_terminal(),
             sort_mode: default_sort_mode(),
@@ -124,6 +127,29 @@ pub fn sanitize_base_dirs(dirs: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(dirs.len());
     for d in dirs {
         let normalized = normalize_base_dir(&d);
+        if normalized.is_empty() || out.contains(&normalized) {
+            continue;
+        }
+        out.push(normalized);
+    }
+    out
+}
+
+/// Normalizes a project path for the disabled list: trims and drops trailing
+/// `/` (except root `/`), so `/a/Demo` and `/a/Demo/` count as the same
+/// project. Same rule as `normalize_base_dir`.
+pub fn normalize_project_path(path: &str) -> String {
+    normalize_base_dir(path)
+}
+
+/// Cleans the disabled-project list: trims, drops trailing `/`, removes empty
+/// and duplicated entries regardless of arrival order. Stale entries (projects
+/// that no longer exist) are kept: they are harmless and avoid re-enabling a
+/// temporarily missing folder on the next scan.
+pub fn sanitize_disabled_projects(paths: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(paths.len());
+    for p in paths {
+        let normalized = normalize_project_path(&p);
         if normalized.is_empty() || out.contains(&normalized) {
             continue;
         }
@@ -211,8 +237,27 @@ pub fn parse_config(text: &str) -> Result<Config, String> {
     // Unknown or legacy values fall back to `"auto"`.
     let theme = normalize_theme(obj.get("theme").and_then(|v| v.as_str()));
 
+    // `disabledProjects` / `disabled_projects`: absolute project paths hidden
+    // from the window list and the tray menu. Missing -> empty (everything
+    // visible, historic behavior); invalid entries are dropped.
+    let mut disabled_projects = Vec::new();
+    let disabled_raw = obj
+        .get("disabledProjects")
+        .and_then(|v| v.as_array())
+        .or_else(|| obj.get("disabled_projects").and_then(|v| v.as_array()));
+    if let Some(list) = disabled_raw {
+        for item in list {
+            if let Some(s) = item.as_str() {
+                if !s.trim().is_empty() {
+                    disabled_projects.push(s.trim().to_string());
+                }
+            }
+        }
+    }
+
     Ok(Config {
         base_dirs: sanitize_base_dirs(base_dirs),
+        disabled_projects: sanitize_disabled_projects(disabled_projects),
         opencode_bin: sanitize_opencode_bin(opencode_bin),
         terminal,
         sort_mode,
@@ -233,6 +278,7 @@ pub fn load_from(path: &Path) -> Config {
 pub fn save_to(path: &Path, config: &Config) -> Result<(), String> {
     let clean = Config {
         base_dirs: sanitize_base_dirs(config.base_dirs.clone()),
+        disabled_projects: sanitize_disabled_projects(config.disabled_projects.clone()),
         opencode_bin: sanitize_opencode_bin(config.opencode_bin.clone()),
         terminal: normalize_terminal(Some(config.terminal.as_str())),
         sort_mode: normalize_sort_mode(Some(config.sort_mode.as_str())),
@@ -334,6 +380,7 @@ mod tests {
         path.push(format!("codedock-save-{}.json", std::process::id()));
         let original = Config {
             base_dirs: vec!["/a".to_string(), "/b".to_string()],
+            disabled_projects: vec!["/a/Old".to_string()],
             opencode_bin: Some("/x/opencode".to_string()),
             terminal: "wezterm".to_string(),
             sort_mode: "base".to_string(),
@@ -351,6 +398,7 @@ mod tests {
         path.push(format!("codedock-save-none-{}.json", std::process::id()));
         let config = Config {
             base_dirs: vec!["/a".to_string()],
+            disabled_projects: Vec::new(),
             opencode_bin: None,
             terminal: "ghostty".to_string(),
             sort_mode: "name".to_string(),
@@ -454,6 +502,7 @@ mod tests {
         path.push(format!("codedock-save-clean-{}.json", std::process::id()));
         let config = Config {
             base_dirs: vec!["/a/".to_string(), "/a".to_string()],
+            disabled_projects: vec!["/a/Old/".to_string(), "/a/Old".to_string(), "  ".to_string()],
             opencode_bin: Some("  ".to_string()),
             terminal: "hyper".to_string(),
             sort_mode: "CARPETA".to_string(),
@@ -463,11 +512,36 @@ mod tests {
         save_to(&path, &config).unwrap();
         let back = load_from(&path);
         assert_eq!(back.base_dirs, vec!["/a".to_string()]);
+        assert_eq!(back.disabled_projects, vec!["/a/Old".to_string()]);
         assert_eq!(back.opencode_bin, None);
         assert_eq!(back.terminal, "ghostty");
         assert_eq!(back.sort_mode, "base");
         assert_eq!(back.language, "en");
         assert_eq!(back.theme, "auto");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn disabled_projects_missing_means_everything_visible() {
+        let config = parse_config(r#"{"baseDirs":["/a"]}"#).unwrap();
+        assert!(config.disabled_projects.is_empty());
+    }
+
+    #[test]
+    fn disabled_projects_are_sanitized_and_snake_case_compat() {
+        let config = parse_config(
+            r#"{"baseDirs":["/a"],"disabledProjects":["/a/Old/","/a/Old","  ","/b/Demo"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.disabled_projects,
+            vec!["/a/Old".to_string(), "/b/Demo".to_string()]
+        );
+        let compat = parse_config(r#"{"disabled_projects":["/x/Y/"]}"#).unwrap();
+        assert_eq!(compat.disabled_projects, vec!["/x/Y".to_string()]);
+        // Non-string entries are dropped without breaking the rest.
+        let mixed = parse_config(r#"{"disabledProjects":["/a/Ok",42,null]}"#).unwrap();
+        assert_eq!(mixed.disabled_projects, vec!["/a/Ok".to_string()]);
+        assert_eq!(normalize_project_path("/a/Demo/"), "/a/Demo");
     }
 }

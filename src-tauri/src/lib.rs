@@ -187,19 +187,22 @@ fn migrate_legacy_applescript_login_item(app: &AppHandle) {
         .output();
 }
 
-/// Rebuilds the tray menu with the current projects, ordered by the stored
-/// `sortMode` to match the window, and labeled in the stored language.
+/// Rebuilds the tray menu with the current projects (disabled ones excluded),
+/// ordered by the stored `sortMode` to match the window, and labeled in the
+/// stored language.
 pub(crate) fn refresh_tray(app: &AppHandle) {
-    let (base_dirs, sort_mode, language) = {
+    let (base_dirs, disabled_projects, sort_mode, language) = {
         let state = app.state::<AppState>();
         let config = state.config.lock().unwrap();
         (
             config.base_dirs.clone(),
+            config.disabled_projects.clone(),
             config.sort_mode.clone(),
             config.language.clone(),
         )
     };
     let mut found = projects::list_projects(&base_dirs, &language);
+    projects::apply_disabled_filter(&mut found, &disabled_projects);
     projects::sort_projects(&mut found, &sort_mode);
     {
         let state = app.state::<AppState>();
@@ -292,6 +295,7 @@ fn reload_from_tray(app: &AppHandle) {
         let state = app.state::<AppState>();
         let config = state.config.lock().unwrap();
         let mut found = projects::list_projects(&config.base_dirs, &config.language);
+        projects::apply_disabled_filter(&mut found, &config.disabled_projects);
         projects::sort_projects(&mut found, &config.sort_mode);
         found
     };
@@ -414,6 +418,7 @@ pub fn run() {
             commands::get_config,
             commands::was_autostart_launch,
             commands::list_projects,
+            commands::list_all_projects,
             commands::list_terminals,
             commands::save_config,
             commands::open_project,

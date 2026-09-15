@@ -66,6 +66,7 @@ are dropped without breaking the rest.
 ```json
 {
   "baseDirs": ["/Users/you/Documents/Programs"],
+  "disabledProjects": ["/Users/you/Documents/Programs/OldDemo"],
   "opencodeBin": null,
   "terminal": "ghostty",
   "sortMode": "name",
@@ -77,6 +78,7 @@ are dropped without breaking the rest.
 | Field         | Description                                                        |
 | ------------- | ------------------------------------------------------------------ |
 | `baseDirs`    | Parent folders; each direct (non-hidden) subfolder is a project    |
+| `disabledProjects` | Project paths hidden from the window list and the menu-bar menu (managed in the "Visible projects" panel with Select all / Select none, per folder and globally; missing = everything visible) |
 | `opencodeBin` | Path to the opencode binary; `null` = auto-detect only             |
 | `terminal`    | One of `ghostty`, `terminal`, `iterm2`, `warp`, `alacritty`, `kitty`, `wezterm`; unknown/missing = `ghostty` |
 | `sortMode`    | `"name"` = global alphabetical; `"base"` = grouped by base folder (then name); unknown/missing = `"name"` |

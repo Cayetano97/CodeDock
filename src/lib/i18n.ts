@@ -86,6 +86,16 @@ export type I18nKey =
   | "bases.listAria"
   | "bases.add"
   | "bases.remove"
+  | "visibility.title"
+  | "visibility.sectionAria"
+  | "visibility.hint"
+  | "visibility.listAria"
+  | "visibility.selectAll"
+  | "visibility.selectNone"
+  | "visibility.status"
+  | "visibility.empty"
+  | "visibility.groupSelectAll"
+  | "visibility.groupSelectNone"
   | "settings.title"
   | "settings.sectionAria"
   | "settings.terminal"
@@ -153,6 +163,16 @@ const EN: Dictionary = {
   "bases.listAria": "Base folders",
   "bases.add": "+ add folder…",
   "bases.remove": "remove",
+  "visibility.title": "Visible projects",
+  "visibility.sectionAria": "Visible projects",
+  "visibility.hint": "Uncheck projects to hide them from the list and the menu bar.",
+  "visibility.listAria": "Visible projects",
+  "visibility.selectAll": "Select all",
+  "visibility.selectNone": "Select none",
+  "visibility.status": "{visible} of {total} visible",
+  "visibility.empty": "No projects to manage yet.",
+  "visibility.groupSelectAll": "All",
+  "visibility.groupSelectNone": "None",
   "settings.title": "Settings",
   "settings.sectionAria": "Settings",
   "settings.terminal": "Terminal",
@@ -219,6 +239,16 @@ const ES: Dictionary = {
   "bases.listAria": "Carpetas base",
   "bases.add": "+ añadir carpeta…",
   "bases.remove": "quitar",
+  "visibility.title": "Proyectos visibles",
+  "visibility.sectionAria": "Proyectos visibles",
+  "visibility.hint": "Desmarca los proyectos para ocultarlos de la lista y del menubar.",
+  "visibility.listAria": "Proyectos visibles",
+  "visibility.selectAll": "Todos",
+  "visibility.selectNone": "Ninguno",
+  "visibility.status": "{visible} de {total} visibles",
+  "visibility.empty": "Aún no hay proyectos que gestionar.",
+  "visibility.groupSelectAll": "Todos",
+  "visibility.groupSelectNone": "Ninguno",
   "settings.title": "Ajustes",
   "settings.sectionAria": "Ajustes",
   "settings.terminal": "Terminal",
@@ -314,6 +344,24 @@ export function formatGroupCount(lang: Language, count: number): string {
     return count === 1 ? "1 proyecto" : `${String(count)} proyectos`;
   }
   return count === 1 ? "1 project" : `${String(count)} projects`;
+}
+
+/**
+ * `5 of 7 visible` / `5 de 7 visibles` status for the visibility panel:
+ * how many scanned projects are currently enabled.
+ */
+export function formatVisibilityStatus(lang: Language, visible: number, total: number): string {
+  return translate(lang, "visibility.status")
+    .replace("{visible}", String(visible))
+    .replace("{total}", String(total));
+}
+
+/** Accessible label of a visibility checkbox (show/hide one project). */
+export function visibilityToggleAriaLabel(lang: Language, name: string, disabled: boolean): string {
+  if (normalizeLanguage(lang) === "es") {
+    return disabled ? `Mostrar ${name} en la lista y el menubar` : `Ocultar ${name} de la lista y el menubar`;
+  }
+  return disabled ? `Show ${name} in the list and menu bar` : `Hide ${name} from the list and menu bar`;
 }
 
 /** `3/10` project counter (position / visible). When a filter hides

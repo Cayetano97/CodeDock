@@ -86,6 +86,27 @@ pub fn sort_projects(projects: &mut [Project], sort_mode: &str) {
     }
 }
 
+/// Whether a scanned project path is disabled (hidden from the window list
+/// and the tray menu). Both sides normalize trailing `/` so `/a/Demo` and
+/// `/a/Demo/` match; comparison is exact (case-sensitive like the filesystem
+/// path on macOS default APFS behavior is case-insensitive, but the stored
+/// path comes from the same scan so exact match is correct and predictable).
+pub fn is_project_disabled(project_path: &str, disabled: &[String]) -> bool {
+    let normalized = crate::config::normalize_project_path(project_path);
+    disabled
+        .iter()
+        .any(|d| crate::config::normalize_project_path(d) == normalized)
+}
+
+/// Removes disabled projects from a scanned list (in place). Stale disabled
+/// entries (no longer on disk) simply match nothing.
+pub fn apply_disabled_filter(projects: &mut Vec<Project>, disabled: &[String]) {
+    if disabled.is_empty() {
+        return;
+    }
+    projects.retain(|p| !is_project_disabled(&p.path, disabled));
+}
+
 /// Scans the bases and lists their direct subfolders. Missing bases or
 /// non-directories are skipped (stderr warning so `tauri dev` shows why a
 /// base yields 0 projects); projects are ordered by name (case-insensitive)
@@ -383,5 +404,25 @@ mod tests {
     fn open_project_rejects_missing_folders_without_touching_terminals() {
         let err = open_project("/codedock-__no_such__", None, None, "en").unwrap_err();
         assert!(err.contains("no longer exists"));
+    }
+
+    #[test]
+    fn disabled_filter_hides_only_listed_paths() {
+        let mut found = vec![
+            Project { name: "Keep".to_string(), path: "/a/Keep".to_string(), base: "/a".to_string() },
+            Project { name: "Old".to_string(), path: "/a/Old".to_string(), base: "/a".to_string() },
+        ];
+        // Empty list keeps everything (historic behavior).
+        apply_disabled_filter(&mut found, &[]);
+        assert_eq!(found.len(), 2);
+        // Trailing slash in the stored entry still matches.
+        apply_disabled_filter(&mut found, &["/a/Old/".to_string()]);
+        assert_eq!(found.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), vec!["Keep"]);
+        assert!(is_project_disabled("/a/Old", &["/a/Old".to_string()]));
+        assert!(!is_project_disabled("/a/Keep", &["/a/Old".to_string()]));
+        // Stale entries match nothing and never panic.
+        let mut again = found.clone();
+        apply_disabled_filter(&mut again, &["/no/such".to_string()]);
+        assert_eq!(again.len(), 1);
     }
 }
