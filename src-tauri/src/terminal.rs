@@ -11,7 +11,7 @@
 //! - Warp: URI scheme `warp://action/new_tab?path=…` (see
 //!   <https://docs.warp.dev/terminal/more-features/uri-scheme/>). It can
 //!   only open a folder, NOT run a command — that is a Warp limitation
-//!   (warpdotdev/Warp#5859), so with Warp the user runs opencode by hand.
+//!   (warpdotdev/Warp#5859), so with Warp the user runs the agent by hand.
 //! - Alacritty / Kitty / WezTerm: their own CLI binaries
 //!   (`--working-directory … -e …`, `--directory …`, `start/spawn --cwd …`).
 
@@ -259,11 +259,11 @@ fn run_osascript(app_name: &str, lines: &[String], lang: &str) -> Result<(), Str
 /// `do script` always opens a new window; there is no stable AppleScript way
 /// to target "a new tab", so a new window per project is the documented
 /// Terminal.app behavior.
-pub fn build_terminal_script(project_path: &str, opencode_bin: &str) -> Vec<String> {
+pub fn build_terminal_script(project_path: &str, agent_bin: &str) -> Vec<String> {
     let cmd = applescript_escape(&format!(
         "cd {} && exec {}",
         shell_quote(project_path),
-        shell_quote(opencode_bin)
+        shell_quote(agent_bin)
     ));
     vec![
         "tell application \"Terminal\"".to_string(),
@@ -276,12 +276,12 @@ pub fn build_terminal_script(project_path: &str, opencode_bin: &str) -> Vec<Stri
 /// New tab in the current window when one exists, new window otherwise, then
 /// `write text` types the `cd … && exec …` line (with trailing newline, so it
 /// runs) instead of replacing the profile command — that keeps the tab open
-/// and interactive after opencode exits.
-pub fn build_iterm_script(project_path: &str, opencode_bin: &str) -> Vec<String> {
+/// and interactive after the agent exits.
+pub fn build_iterm_script(project_path: &str, agent_bin: &str) -> Vec<String> {
     let cmd = applescript_escape(&format!(
         "cd {} && exec {}",
         shell_quote(project_path),
-        shell_quote(opencode_bin)
+        shell_quote(agent_bin)
     ));
     vec![
         "tell application \"iTerm2\"".to_string(),
@@ -311,30 +311,30 @@ pub fn warp_url(project_path: &str, new_window: bool) -> String {
 
 /// Alacritty has no tabs: every project opens a new window.
 /// `alacritty --working-directory <dir> -e <cmd>`.
-pub fn alacritty_argv(binary: &str, project_path: &str, opencode_bin: &str) -> Vec<String> {
+pub fn alacritty_argv(binary: &str, project_path: &str, agent_bin: &str) -> Vec<String> {
     vec![
         binary.to_string(),
         "--working-directory".to_string(),
         project_path.to_string(),
         "-e".to_string(),
-        opencode_bin.to_string(),
+        agent_bin.to_string(),
     ]
 }
 
 /// Kitty opens a new OS window: `kitty --directory <dir> <cmd>`.
 /// (Tabs in the current window would need remote control enabled in
 /// `kitty.conf`, which CodeDock does not assume.)
-pub fn kitty_argv(binary: &str, project_path: &str, opencode_bin: &str) -> Vec<String> {
+pub fn kitty_argv(binary: &str, project_path: &str, agent_bin: &str) -> Vec<String> {
     vec![
         binary.to_string(),
         "--directory".to_string(),
         project_path.to_string(),
-        opencode_bin.to_string(),
+        agent_bin.to_string(),
     ]
 }
 
 /// New tab in the running instance: `wezterm cli spawn --cwd <dir> -- <cmd>`.
-pub fn wezterm_spawn_argv(binary: &str, project_path: &str, opencode_bin: &str) -> Vec<String> {
+pub fn wezterm_spawn_argv(binary: &str, project_path: &str, agent_bin: &str) -> Vec<String> {
     vec![
         binary.to_string(),
         "cli".to_string(),
@@ -342,19 +342,19 @@ pub fn wezterm_spawn_argv(binary: &str, project_path: &str, opencode_bin: &str) 
         "--cwd".to_string(),
         project_path.to_string(),
         "--".to_string(),
-        opencode_bin.to_string(),
+        agent_bin.to_string(),
     ]
 }
 
 /// Cold start (no GUI running): `wezterm start --cwd <dir> -- <cmd>`.
-pub fn wezterm_start_argv(binary: &str, project_path: &str, opencode_bin: &str) -> Vec<String> {
+pub fn wezterm_start_argv(binary: &str, project_path: &str, agent_bin: &str) -> Vec<String> {
     vec![
         binary.to_string(),
         "start".to_string(),
         "--cwd".to_string(),
         project_path.to_string(),
         "--".to_string(),
-        opencode_bin.to_string(),
+        agent_bin.to_string(),
     ]
 }
 
@@ -401,10 +401,10 @@ fn open_warp(project_path: &str, lang: &str) -> Result<(), String> {
     }
 }
 
-fn open_wezterm(project_path: &str, opencode_bin: &str, lang: &str) -> Result<(), String> {
+fn open_wezterm(project_path: &str, agent_bin: &str, lang: &str) -> Result<(), String> {
     let bin = wezterm_binary().ok_or_else(|| err_wezterm_missing(lang))?;
     // Prefer a new tab in the running instance; fall back to a cold start.
-    let spawn = wezterm_spawn_argv(&bin, project_path, opencode_bin);
+    let spawn = wezterm_spawn_argv(&bin, project_path, agent_bin);
     if let Ok(output) = std::process::Command::new(&spawn[0])
         .args(&spawn[1..])
         .output()
@@ -415,18 +415,18 @@ fn open_wezterm(project_path: &str, opencode_bin: &str, lang: &str) -> Result<()
     }
     spawn_detached(
         "WezTerm",
-        &wezterm_start_argv(&bin, project_path, opencode_bin),
+        &wezterm_start_argv(&bin, project_path, agent_bin),
         lang,
     )
 }
 
 /// Opens the project in the given terminal (id as stored in config) and runs
-/// opencode inside — except Warp, whose URI scheme can only open the folder
+/// the agent binary inside — except Warp, whose URI scheme can only open the folder
 /// (documented in the README and in the UI hint).
 pub fn open_in_terminal(
     terminal: &str,
     project_path: &str,
-    opencode_bin: &str,
+    agent_bin: &str,
     lang: &str,
 ) -> Result<(), String> {
     let id = normalize_terminal(Some(terminal));
@@ -436,29 +436,29 @@ pub fn open_in_terminal(
     match id.as_str() {
         "ghostty" => run_osascript(
             "Ghostty",
-            &crate::projects::build_open_script(project_path, opencode_bin),
+            &crate::projects::build_open_script(project_path, agent_bin),
             lang,
         ),
         "terminal" => run_osascript(
             "Terminal",
-            &build_terminal_script(project_path, opencode_bin),
+            &build_terminal_script(project_path, agent_bin),
             lang,
         ),
-        "iterm2" => run_osascript("iTerm2", &build_iterm_script(project_path, opencode_bin), lang),
+        "iterm2" => run_osascript("iTerm2", &build_iterm_script(project_path, agent_bin), lang),
         "warp" => open_warp(project_path, lang),
         "alacritty" => {
             let bin = alacritty_binary().ok_or_else(|| err_alacritty_missing(lang))?;
-            spawn_detached("Alacritty", &alacritty_argv(&bin, project_path, opencode_bin), lang)
+            spawn_detached("Alacritty", &alacritty_argv(&bin, project_path, agent_bin), lang)
         }
         "kitty" => {
             let bin = kitty_binary().ok_or_else(|| err_kitty_missing(lang))?;
-            spawn_detached("Kitty", &kitty_argv(&bin, project_path, opencode_bin), lang)
+            spawn_detached("Kitty", &kitty_argv(&bin, project_path, agent_bin), lang)
         }
-        "wezterm" => open_wezterm(project_path, opencode_bin, lang),
+        "wezterm" => open_wezterm(project_path, agent_bin, lang),
         // `normalize_terminal` only returns known ids; this is unreachable.
         _ => run_osascript(
             "Ghostty",
-            &crate::projects::build_open_script(project_path, opencode_bin),
+            &crate::projects::build_open_script(project_path, agent_bin),
             lang,
         ),
     }

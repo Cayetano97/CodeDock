@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AGENT_IDS,
+  agentHint,
+  DEFAULT_AGENT,
   DEFAULT_LANGUAGE,
   DEFAULT_LANGUAGE_SETTING,
   formatCount,
   formatGroupCount,
   formatVisibilityStatus,
   I18N_KEYS,
+  normalizeAgentSetting,
   normalizeLanguage,
   normalizeLanguageSetting,
   projectAriaLabel,
@@ -122,8 +126,10 @@ describe("formatters", () => {
   });
 
   it("labels rows and chrome per language", () => {
-    expect(projectAriaLabel("en", "Demo", "Ghostty", "Programs")).toContain("Open Demo");
-    expect(projectAriaLabel("es", "Demo", "Ghostty", "Programs")).toContain("Abrir Demo");
+    expect(projectAriaLabel("en", "Demo", "Ghostty", "opencode", "Programs")).toContain("Open Demo");
+    expect(projectAriaLabel("en", "Demo", "Ghostty", "pi", "Programs")).toContain("with pi");
+    expect(projectAriaLabel("es", "Demo", "Ghostty", "opencode", "Programs")).toContain("Abrir Demo");
+    expect(projectAriaLabel("es", "Demo", "Ghostty", "pi", "Programs")).toContain("con pi");
     expect(versionAriaLabel("en", "v0.1.0")).toBe("Version v0.1.0");
     expect(versionAriaLabel("es", "v0.1.0")).toBe("Versión v0.1.0");
     expect(removeBaseAriaLabel("en", "/a")).toBe("Remove /a");
@@ -136,6 +142,22 @@ describe("formatters", () => {
       expect(terminalHint("es", id)).not.toBe("");
     }
     expect(terminalHint("en", "unknown")).toBe("");
+  });
+
+  it("hints every known agent in both languages", () => {
+    expect(DEFAULT_AGENT).toBe("opencode");
+    expect(AGENT_IDS).toEqual(["opencode", "pi", "claude", "custom"]);
+    expect(normalizeAgentSetting(undefined)).toBe("opencode");
+    expect(normalizeAgentSetting("")).toBe("opencode");
+    expect(normalizeAgentSetting("  Pi ")).toBe("pi");
+    expect(normalizeAgentSetting("CLAUDE")).toBe("claude");
+    expect(normalizeAgentSetting("custom")).toBe("custom");
+    expect(normalizeAgentSetting("hyper")).toBe("opencode");
+    for (const id of AGENT_IDS) {
+      expect(agentHint("en", id)).not.toBe("");
+      expect(agentHint("es", id)).not.toBe("");
+    }
+    expect(agentHint("en", "unknown")).toBe("");
   });
 
   it("labels the visibility manager in both languages", () => {

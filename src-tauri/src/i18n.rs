@@ -267,6 +267,33 @@ pub fn err_opencode_not_found(lang: &str) -> String {
     }
 }
 
+/// No binary was found for a named agent preset (`pi`, `claude`).
+pub fn err_agent_not_found(lang: &str, agent: &str) -> String {
+    if is_spanish(lang) {
+        format!("No se encontró {agent}. Instálalo o elige otro agente en Ajustes.")
+    } else {
+        format!("{agent} not found. Install it or pick another agent in Settings.")
+    }
+}
+
+/// The `custom` agent preset has no binary path configured.
+pub fn err_agent_custom_missing(lang: &str) -> String {
+    if is_spanish(lang) {
+        "No hay ruta de agente personalizada. Pon su ruta en Ajustes.".to_string()
+    } else {
+        "Custom agent path is not set. Set its path in Settings.".to_string()
+    }
+}
+
+/// The configured custom agent binary points nowhere.
+pub fn err_agent_custom_not_found(lang: &str, expanded: &str) -> String {
+    if is_spanish(lang) {
+        format!("No existe el binario de agente personalizado: {expanded}")
+    } else {
+        format!("Custom agent binary does not exist: {expanded}")
+    }
+}
+
 /// The project folder is gone.
 pub fn err_project_missing(lang: &str, path: &str) -> String {
     if is_spanish(lang) {
@@ -351,6 +378,12 @@ mod tests {
     fn errors_cover_both_languages() {
         assert!(err_opencode_not_found("en").contains("opencode not found"));
         assert!(err_opencode_not_found("es").contains("No se encontró opencode"));
+        assert!(err_agent_not_found("en", "pi").contains("pi not found"));
+        assert!(err_agent_not_found("es", "pi").contains("No se encontró pi"));
+        assert!(err_agent_custom_missing("en").contains("Custom agent path"));
+        assert!(err_agent_custom_missing("es").contains("agente personalizada"));
+        assert!(err_agent_custom_not_found("en", "/x").contains("does not exist"));
+        assert!(err_agent_custom_not_found("es", "/x").contains("No existe"));
         assert!(err_project_missing("en", "/x").contains("no longer exists"));
         assert!(err_project_missing("es", "/x").contains("ya no existe"));
     }

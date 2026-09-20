@@ -417,7 +417,8 @@ button:focus-visible {
 }
 
 #search,
-#opencode-bin {
+#opencode-bin,
+#agent-bin {
   width: 100%;
   background: transparent;
   color: var(--text);
@@ -428,12 +429,14 @@ button:focus-visible {
 }
 
 #search:focus,
-#opencode-bin:focus {
+#opencode-bin:focus,
+#agent-bin:focus {
   outline: none;
 }
 
 #search::placeholder,
-#opencode-bin::placeholder {
+#opencode-bin::placeholder,
+#agent-bin::placeholder {
   color: var(--faint);
 }
 
@@ -803,6 +806,13 @@ section.panel .panel-body {
   gap: 6px;
 }
 
+/* `hidden` needs an explicit rule here: `.row` sets `display: flex`, which
+   would otherwise override the UA `[hidden]` default (same pattern as
+   `#update-backdrop[hidden]`). */
+#agent-bin-row[hidden] {
+  display: none;
+}
+
 .row input[type="checkbox"] {
   width: 15px;
   height: 15px;
@@ -812,7 +822,8 @@ section.panel .panel-body {
 #terminal,
 #sort-mode,
 #language,
-#theme {
+#theme,
+#agent {
   background: var(--bg);
   color: var(--text);
   border: 1px solid var(--border);
@@ -828,7 +839,8 @@ section.panel .panel-body {
 #terminal:focus-visible,
 #sort-mode:focus-visible,
 #language:focus-visible,
-#theme:focus-visible {
+#theme:focus-visible,
+#agent:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }

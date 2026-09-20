@@ -131,6 +131,29 @@
           </label>
           <p class="hint" id="terminal-hint"></p>
           <label class="row">
+            <span id="agent-label">Agent</span>
+            <select id="agent" aria-label="Agent to run in the terminal">
+              <option value="opencode">opencode</option>
+              <option value="pi">pi</option>
+              <option value="claude">claude</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </label>
+          <p class="hint" id="agent-hint"></p>
+          <label class="row col" id="agent-bin-row" hidden>
+            <span id="agent-custom-label">Custom agent path (bare binary, no arguments)</span>
+            <span class="field">
+              <input
+                id="agent-bin"
+                type="text"
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                placeholder="~/bin/my-agent"
+              />
+            </span>
+          </label>
+          <label class="row">
             <span id="sort-label">Sort projects</span>
             <select id="sort-mode" aria-label="How to sort projects">
               <option value="name">By name</option>

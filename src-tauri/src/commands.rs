@@ -15,6 +15,8 @@ pub struct ConfigPayload {
     pub base_dirs: Vec<String>,
     pub disabled_projects: Vec<String>,
     pub opencode_bin: Option<String>,
+    pub agent: String,
+    pub agent_bin: Option<String>,
     pub terminal: String,
     pub sort_mode: String,
     pub language: String,
@@ -27,6 +29,8 @@ impl From<&Config> for ConfigPayload {
             base_dirs: c.base_dirs.clone(),
             disabled_projects: c.disabled_projects.clone(),
             opencode_bin: c.opencode_bin.clone(),
+            agent: c.agent.clone(),
+            agent_bin: c.agent_bin.clone(),
             terminal: c.terminal.clone(),
             sort_mode: c.sort_mode.clone(),
             language: c.language.clone(),
@@ -84,6 +88,8 @@ pub fn save_config(
     state: State<'_, AppState>,
     base_dirs: Vec<String>,
     opencode_bin: Option<String>,
+    agent: Option<String>,
+    agent_bin: Option<String>,
     terminal: Option<String>,
     sort_mode: Option<String>,
     language: Option<String>,
@@ -94,6 +100,10 @@ pub fn save_config(
         base_dirs: config::sanitize_base_dirs(base_dirs),
         disabled_projects: config::sanitize_disabled_projects(disabled_projects.unwrap_or_default()),
         opencode_bin: opencode_bin
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        agent: config::normalize_agent(agent.as_deref()),
+        agent_bin: agent_bin
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         terminal: terminal::normalize_terminal(terminal.as_deref()),
@@ -114,18 +124,27 @@ pub fn save_config(
     Ok(ConfigPayload::from(&config))
 }
 
-/// Opens the project in the configured terminal with opencode inside.
+/// Opens the project in the configured terminal with the selected agent inside.
 #[tauri::command]
 pub fn open_project(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let (opencode, terminal, language) = {
+    let (agent, opencode, agent_bin, terminal, language) = {
         let config = state.config.lock().unwrap();
         (
+            config.agent.clone(),
             config.opencode_bin.clone(),
+            config.agent_bin.clone(),
             config.terminal.clone(),
             config.language.clone(),
         )
     };
-    projects::open_project(&path, opencode.as_deref(), Some(terminal.as_str()), &language)
+    projects::open_project(
+        &path,
+        Some(agent.as_str()),
+        opencode.as_deref(),
+        agent_bin.as_deref(),
+        Some(terminal.as_str()),
+        &language,
+    )
 }
 
 /// Supported terminals and whether they are installed (for the UI picker).

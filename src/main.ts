@@ -5,9 +5,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
+  agentHint,
   formatCount,
   formatGroupCount,
   formatVisibilityStatus,
+  normalizeAgentSetting,
   normalizeLanguageSetting,
   projectAriaLabel,
   removeBaseAriaLabel,
@@ -15,6 +17,7 @@ import {
   terminalHint,
   translate,
   visibilityToggleAriaLabel,
+  type AgentId,
   type I18nKey,
   type Language,
   type LanguageSetting,
@@ -70,6 +73,8 @@ interface Config {
   baseDirs: string[];
   disabledProjects: string[];
   opencodeBin: string | null;
+  agent: AgentId;
+  agentBin: string | null;
   terminal: string;
   sortMode: SortMode;
   language: LanguageSetting;
@@ -86,6 +91,8 @@ let config: Config = {
   baseDirs: [],
   disabledProjects: [],
   opencodeBin: null,
+  agent: "opencode",
+  agentBin: null,
   terminal: "ghostty",
   sortMode: "name",
   language: "auto",
@@ -121,6 +128,10 @@ const visibilityEmpty = document.querySelector<HTMLElement>("#visibility-empty")
 const autostartToggle = document.querySelector<HTMLInputElement>("#autostart")!;
 const terminalSelect = document.querySelector<HTMLSelectElement>("#terminal")!;
 const terminalHintEl = document.querySelector<HTMLElement>("#terminal-hint")!;
+const agentSelect = document.querySelector<HTMLSelectElement>("#agent")!;
+const agentHintEl = document.querySelector<HTMLElement>("#agent-hint")!;
+const agentBinRow = document.querySelector<HTMLElement>("#agent-bin-row")!;
+const agentBin = document.querySelector<HTMLInputElement>("#agent-bin")!;
 const sortSelect = document.querySelector<HTMLSelectElement>("#sort-mode")!;
 const themeSelect = document.querySelector<HTMLSelectElement>("#theme")!;
 const languageSelect = document.querySelector<HTMLSelectElement>("#language")!;
@@ -237,6 +248,8 @@ function applyI18n(): void {
   setText("#language-label", "settings.language");
   setText("#theme-label", "settings.theme");
   setText("#terminal-label", "settings.terminal");
+  setText("#agent-label", "settings.agent");
+  setText("#agent-custom-label", "settings.agentCustomPath");
   setText("#sort-label", "settings.sort");
   setText("#sort-hint", "settings.sortHint");
   setText("#autostart-label", "settings.autostart");
@@ -261,6 +274,10 @@ function applyI18n(): void {
   bases.setAttribute("aria-label", t("bases.listAria"));
   visibilityList.setAttribute("aria-label", t("visibility.listAria"));
   terminalSelect.setAttribute("aria-label", t("settings.terminalAria"));
+  agentSelect.setAttribute("aria-label", t("settings.agentAria"));
+  agentBin.placeholder = t("settings.agentCustomPlaceholder");
+  const customOpt = agentSelect.querySelector('option[value="custom"]');
+  if (customOpt) customOpt.textContent = t("settings.agentCustom");
   sortSelect.setAttribute("aria-label", t("settings.sortAria"));
   languageSelect.setAttribute("aria-label", t("settings.languageAria"));
   autostartToggle.setAttribute("aria-label", t("settings.autostart"));
@@ -629,6 +646,35 @@ function terminalName(): string {
   return terminals.find((t) => t.id === config.terminal)?.name ?? config.terminal;
 }
 
+/** Display name of the selected agent for labels (custom shows its binary). */
+function agentName(): string {
+  if (config.agent === "custom") {
+    const raw = (config.agentBin ?? "").trim();
+    if (raw !== "") {
+      const base = raw.split("/").pop() ?? raw;
+      return base !== "" ? base : raw;
+    }
+    return t("settings.agentCustom");
+  }
+  return config.agent;
+}
+
+function syncAgentHint(): void {
+  agentHintEl.textContent = agentHint(lang, config.agent);
+  // The custom path field only matters for the custom preset (mirrors the
+  // opencode-bin pattern: the input stays, the row hides).
+  agentBinRow.hidden = config.agent !== "custom";
+}
+
+function renderAgentOptions(): void {
+  // Options are static in the HTML (no availability probe like terminals):
+  // re-label the custom option per language, then sync value + hint.
+  const customOpt = agentSelect.querySelector('option[value="custom"]');
+  if (customOpt) customOpt.textContent = t("settings.agentCustom");
+  agentSelect.value = config.agent;
+  syncAgentHint();
+}
+
 function syncTerminalHint(): void {
   terminalHintEl.textContent = terminalHint(lang, config.terminal);
 }
@@ -716,7 +762,7 @@ function renderProjects(): void {
     btn.append(name, path);
     btn.setAttribute(
       "aria-label",
-      projectAriaLabel(lang, p.name, terminalName(), baseLabel(p.base)),
+      projectAriaLabel(lang, p.name, terminalName(), agentName(), baseLabel(p.base)),
     );
     btn.addEventListener("click", () => void openProject(p.path));
     btn.addEventListener("mousemove", () => {
@@ -940,6 +986,9 @@ function syncSettings(): void {
   themeSelect.value = themeSetting;
   languageSelect.value = languageSetting;
   opencodeBin.value = config.opencodeBin ?? "";
+  agentSelect.value = config.agent;
+  agentBin.value = config.agentBin ?? "";
+  syncAgentHint();
   if (terminalSelect.options.length > 0) {
     terminalSelect.value = config.terminal;
     syncTerminalHint();
@@ -1005,6 +1054,9 @@ async function saveAll(): Promise<void> {
   const disabledProjects = [...config.disabledProjects];
   const opencodeBinValue =
     opencodeBin.value.trim() === "" ? null : opencodeBin.value.trim();
+  const agent = normalizeAgentSetting(agentSelect.value);
+  const agentBinValue =
+    agentBin.value.trim() === "" ? null : agentBin.value.trim();
   const terminal = terminalSelect.value;
   const sortMode = normalizeSortMode(sortSelect.value);
   const language = normalizeLanguageSetting(languageSelect.value);
@@ -1014,6 +1066,8 @@ async function saveAll(): Promise<void> {
       baseDirs,
       disabledProjects,
       opencodeBin: opencodeBinValue,
+      agent,
+      agentBin: agentBinValue,
       terminal,
       sortMode,
       language,
@@ -1022,12 +1076,14 @@ async function saveAll(): Promise<void> {
     // The backend normalizes: apply the canonical mode and language to the UI.
     // An explicit "en"/"es" is kept as-is; "auto" follows the system.
     config.sortMode = normalizeSortMode(config.sortMode);
+    config.agent = normalizeAgentSetting((config as Partial<Config>).agent);
     config.disabledProjects = sanitizeDisabledProjects(config.disabledProjects);
     applyLanguageSetting(config.language);
     applyThemeSetting(config.theme);
     applyI18n();
     syncSettings();
     renderTerminalOptions();
+    renderAgentOptions();
     // The backend sanitizes (trims, dedupes): re-render so stale bases
     // never linger in the UI. Bases are re-painted here because tints
     // follow the active scheme; rows refresh below via `refreshProjects`.
@@ -1216,6 +1272,7 @@ languageSelect.addEventListener("change", () => {
   languageSelect.value = languageSetting;
   applyI18n();
   renderTerminalOptions();
+  renderAgentOptions();
   renderProjects();
   renderBases();
   renderVisibility();
@@ -1230,9 +1287,39 @@ languageSelect.addEventListener("change", () => {
       languageSelect.value = prevSetting;
       applyI18n();
       renderTerminalOptions();
+      renderAgentOptions();
       renderProjects();
       renderBases();
       renderVisibility();
+      showError(typeof e === "string" ? e : String(e));
+    }
+  })();
+});
+
+// Immediate save: the chosen agent is the one used
+// when a project is clicked, without relying on the Save button.
+agentSelect.addEventListener("change", () => {
+  const next = normalizeAgentSetting(agentSelect.value);
+  if (next === config.agent) {
+    agentSelect.value = config.agent;
+    syncAgentHint();
+    return;
+  }
+  const prev = config.agent;
+  // Optimistic paint so the hint + custom row follow instantly.
+  config.agent = next;
+  agentSelect.value = next;
+  syncAgentHint();
+  renderProjects();
+  void (async () => {
+    try {
+      await saveAll();
+    } catch (e) {
+      // Reverts the optimistic change when the backend did not save.
+      config.agent = prev;
+      agentSelect.value = prev;
+      syncAgentHint();
+      renderProjects();
       showError(typeof e === "string" ? e : String(e));
     }
   })();
@@ -1339,6 +1426,8 @@ async function init(): Promise<void> {
     config = {
       ...cfg,
       sortMode: normalizeSortMode(cfg.sortMode),
+      agent: normalizeAgentSetting((cfg as Partial<Config>).agent),
+      agentBin: (cfg as Partial<Config>).agentBin ?? null,
       disabledProjects: sanitizeDisabledProjects(
         (cfg as Partial<Config>).disabledProjects,
       ),
@@ -1348,6 +1437,7 @@ async function init(): Promise<void> {
     terminals = terms;
     applyI18n();
     renderTerminalOptions();
+    renderAgentOptions();
     syncSettings();
     renderBases();
     renderVisibility();

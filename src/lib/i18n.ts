@@ -9,6 +9,27 @@ export type Language = "en" | "es";
  */
 export type LanguageSetting = Language | "auto";
 
+/** Agent preset ids offered in Settings (v1: bare binaries, no arguments). */
+export type AgentId = "opencode" | "pi" | "claude" | "custom";
+
+/** Default agent: opencode (historic behavior). */
+export const DEFAULT_AGENT: AgentId = "opencode";
+
+/** Agents offered in Settings, in display order. */
+export const AGENT_IDS: readonly AgentId[] = ["opencode", "pi", "claude", "custom"];
+
+/**
+ * Normalizes a stored agent setting from config or UI: trims, lowercases,
+ * keeps the known presets; anything else (missing, empty, unknown) falls
+ * back to `"opencode"` so opening never breaks.
+ */
+export function normalizeAgentSetting(raw: unknown): AgentId {
+  if (typeof raw !== "string") return DEFAULT_AGENT;
+  const id = raw.trim().toLowerCase();
+  if (id === "opencode" || id === "pi" || id === "claude" || id === "custom") return id;
+  return DEFAULT_AGENT;
+}
+
 /** Fallback language: English. */
 export const DEFAULT_LANGUAGE: Language = "en";
 
@@ -109,6 +130,11 @@ export type I18nKey =
   | "settings.autostartHint"
   | "settings.opencodePath"
   | "settings.opencodePlaceholder"
+  | "settings.agent"
+  | "settings.agentAria"
+  | "settings.agentCustom"
+  | "settings.agentCustomPath"
+  | "settings.agentCustomPlaceholder"
   | "settings.save"
   | "settings.language"
   | "settings.languageAria"
@@ -186,6 +212,11 @@ const EN: Dictionary = {
   "settings.autostartHint": "Off: start CodeDock by hand.",
   "settings.opencodePath": "opencode path (empty = auto-detect)",
   "settings.opencodePlaceholder": "~/.opencode/bin/opencode",
+  "settings.agent": "Agent",
+  "settings.agentAria": "Agent to run in the terminal",
+  "settings.agentCustom": "Custom…",
+  "settings.agentCustomPath": "Custom agent path (bare binary, no arguments)",
+  "settings.agentCustomPlaceholder": "~/bin/my-agent",
   "settings.save": "Save",
   "settings.language": "Language",
   "settings.languageAria": "Interface language",
@@ -262,6 +293,11 @@ const ES: Dictionary = {
   "settings.autostartHint": "Apagado: arranca CodeDock a mano.",
   "settings.opencodePath": "Ruta de opencode (vacío = detectar solo)",
   "settings.opencodePlaceholder": "~/.opencode/bin/opencode",
+  "settings.agent": "Agente",
+  "settings.agentAria": "Agente que se ejecuta en la terminal",
+  "settings.agentCustom": "Personalizado…",
+  "settings.agentCustomPath": "Ruta del agente personalizado (binario solo, sin argumentos)",
+  "settings.agentCustomPlaceholder": "~/bin/my-agent",
   "settings.save": "Guardar",
   "settings.language": "Idioma",
   "settings.languageAria": "Idioma de la interfaz",
@@ -314,7 +350,7 @@ const TERMINAL_HINTS_EN: Record<string, string> = {
   ghostty: "New tab if Ghostty is open; otherwise a new window.",
   terminal: "Terminal.app always opens a new window (it has no tab API).",
   iterm2: "New tab if iTerm2 is open; otherwise a new window.",
-  warp: "Warp only opens the folder in a tab: run opencode by hand (its API cannot launch commands).",
+  warp: "Warp only opens the folder in a tab: run the agent by hand (its API cannot launch commands).",
   alacritty: "Alacritty has no tabs: always opens a new window.",
   kitty: "Kitty opens a new OS window (tabs need remote control in kitty.conf).",
   wezterm: "New tab if WezTerm is open; otherwise a new window.",
@@ -325,7 +361,7 @@ const TERMINAL_HINTS_ES: Record<string, string> = {
   ghostty: "Pestaña nueva si Ghostty está abierto; si no, ventana nueva.",
   terminal: "Terminal.app siempre abre ventana nueva (no sabe abrir pestañas).",
   iterm2: "Pestaña nueva si iTerm2 está abierto; si no, ventana nueva.",
-  warp: "Warp solo abre la carpeta en una pestaña: ejecuta opencode a mano (su API no permite lanzar comandos).",
+  warp: "Warp solo abre la carpeta en una pestaña: ejecuta el agente a mano (su API no permite lanzar comandos).",
   alacritty: "Alacritty no tiene pestañas: siempre abre ventana nueva.",
   kitty: "Kitty abre una ventana de SO nueva (las pestañas requieren control remoto en kitty.conf).",
   wezterm: "Pestaña nueva si WezTerm está abierto; si no, ventana nueva.",
@@ -336,6 +372,29 @@ export function terminalHint(lang: Language, terminalId: string): string {
   const normalized = normalizeLanguage(lang);
   const table = normalized === "es" ? TERMINAL_HINTS_ES : TERMINAL_HINTS_EN;
   return table[terminalId] ?? TERMINAL_HINTS_EN[terminalId] ?? "";
+}
+
+/** Per-agent behavior hint shown under the picker (v1: bare binaries only). */
+const AGENT_HINTS_EN: Record<string, string> = {
+  opencode: "Auto-detected, or the opencode path below when set.",
+  pi: "Uses the pi binary from your PATH or Homebrew.",
+  claude: "Uses the claude binary from your PATH or Homebrew.",
+  custom: "Runs your binary below (bare path, no arguments).",
+};
+
+/** Spanish per-agent behavior hint. */
+const AGENT_HINTS_ES: Record<string, string> = {
+  opencode: "Detectado solo, o la ruta de opencode de abajo si está puesta.",
+  pi: "Usa el binario pi de tu PATH o Homebrew.",
+  claude: "Usa el binario claude de tu PATH o Homebrew.",
+  custom: "Ejecuta tu binario de abajo (ruta sola, sin argumentos).",
+};
+
+/** Behavior hint for an agent id, with English fallback. */
+export function agentHint(lang: Language, agentId: string): string {
+  const normalized = normalizeLanguage(lang);
+  const table = normalized === "es" ? AGENT_HINTS_ES : AGENT_HINTS_EN;
+  return table[agentId] ?? AGENT_HINTS_EN[agentId] ?? "";
 }
 
 /** `1 project` / `N projects` group counter. */
@@ -384,12 +443,13 @@ export function projectAriaLabel(
   lang: Language,
   name: string,
   terminalName: string,
+  agentName: string,
   baseLabel: string,
 ): string {
   if (normalizeLanguage(lang) === "es") {
-    return `Abrir ${name} en ${terminalName} con opencode (carpeta ${baseLabel})`;
+    return `Abrir ${name} en ${terminalName} con ${agentName} (carpeta ${baseLabel})`;
   }
-  return `Open ${name} in ${terminalName} with opencode (folder ${baseLabel})`;
+  return `Open ${name} in ${terminalName} with ${agentName} (folder ${baseLabel})`;
 }
 
 /** Accessible label of the version (statusbar only; the header badge

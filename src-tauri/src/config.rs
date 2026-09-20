@@ -62,6 +62,22 @@ pub fn normalize_theme(raw: Option<&str>) -> String {
     default_theme()
 }
 
+/// Default agent for fresh configs and unknown values.
+pub fn default_agent() -> String {
+    "opencode".to_string()
+}
+
+/// Normalizes an agent id coming from user config: trims, lowercases and
+/// falls back to `"opencode"` for unknown values so a hand-edited config can
+/// never break project opening. Same policy as terminal/sort/theme/language.
+pub fn normalize_agent(raw: Option<&str>) -> String {
+    let id = raw.unwrap_or_default().trim().to_lowercase();
+    match id.as_str() {
+        "opencode" | "pi" | "claude" | "custom" => id,
+        _ => default_agent(),
+    }
+}
+
 /// Persisted config (camelCase on disk, like QuickSpot).
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +88,10 @@ pub struct Config {
     pub disabled_projects: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode_bin: Option<String>,
+    #[serde(default = "default_agent")]
+    pub agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_bin: Option<String>,
     #[serde(default = "default_terminal")]
     pub terminal: String,
     #[serde(default = "default_sort_mode")]
@@ -88,6 +108,8 @@ impl Config {
             base_dirs: default_base_dirs(),
             disabled_projects: Vec::new(),
             opencode_bin: None,
+            agent: default_agent(),
+            agent_bin: None,
             terminal: default_terminal(),
             sort_mode: default_sort_mode(),
             language: default_language(),
@@ -172,6 +194,10 @@ fn sanitize_opencode_bin(value: Option<String>) -> Option<String> {
     }
 }
 
+fn sanitize_agent_bin(value: Option<String>) -> Option<String> {
+    sanitize_opencode_bin(value)
+}
+
 /// Parses the config text. Broken JSON or a non-object shape returns `Err`
 /// and the caller falls back to defaults.
 pub fn parse_config(text: &str) -> Result<Config, String> {
@@ -205,6 +231,16 @@ pub fn parse_config(text: &str) -> Result<Config, String> {
         .get("opencodeBin")
         .and_then(|v| v.as_str())
         .or_else(|| obj.get("opencode_bin").and_then(|v| v.as_str()))
+        .map(str::to_string);
+
+    // `agent` is the same in camelCase and snake_case; unknown or missing
+    // values fall back to opencode so opening never breaks.
+    let agent = normalize_agent(obj.get("agent").and_then(|v| v.as_str()));
+
+    let agent_bin = obj
+        .get("agentBin")
+        .and_then(|v| v.as_str())
+        .or_else(|| obj.get("agent_bin").and_then(|v| v.as_str()))
         .map(str::to_string);
 
     // `terminal` is the same in camelCase and snake_case; unknown or missing
@@ -259,6 +295,8 @@ pub fn parse_config(text: &str) -> Result<Config, String> {
         base_dirs: sanitize_base_dirs(base_dirs),
         disabled_projects: sanitize_disabled_projects(disabled_projects),
         opencode_bin: sanitize_opencode_bin(opencode_bin),
+        agent,
+        agent_bin: sanitize_agent_bin(agent_bin),
         terminal,
         sort_mode,
         language,
@@ -274,12 +312,14 @@ pub fn load_from(path: &Path) -> Config {
     }
 }
 
-/// Writes the config as pretty JSON (omits `opencodeBin` when `None`).
+/// Writes the config as pretty JSON (omits `opencodeBin`/`agentBin` when `None`).
 pub fn save_to(path: &Path, config: &Config) -> Result<(), String> {
     let clean = Config {
         base_dirs: sanitize_base_dirs(config.base_dirs.clone()),
         disabled_projects: sanitize_disabled_projects(config.disabled_projects.clone()),
         opencode_bin: sanitize_opencode_bin(config.opencode_bin.clone()),
+        agent: normalize_agent(Some(config.agent.as_str())),
+        agent_bin: sanitize_agent_bin(config.agent_bin.clone()),
         terminal: normalize_terminal(Some(config.terminal.as_str())),
         sort_mode: normalize_sort_mode(Some(config.sort_mode.as_str())),
         language: normalize_language_setting(Some(config.language.as_str())),
@@ -382,6 +422,8 @@ mod tests {
             base_dirs: vec!["/a".to_string(), "/b".to_string()],
             disabled_projects: vec!["/a/Old".to_string()],
             opencode_bin: Some("/x/opencode".to_string()),
+            agent: "pi".to_string(),
+            agent_bin: None,
             terminal: "wezterm".to_string(),
             sort_mode: "base".to_string(),
             language: "es".to_string(),
@@ -400,6 +442,8 @@ mod tests {
             base_dirs: vec!["/a".to_string()],
             disabled_projects: Vec::new(),
             opencode_bin: None,
+            agent: default_agent(),
+            agent_bin: None,
             terminal: "ghostty".to_string(),
             sort_mode: "name".to_string(),
             language: "en".to_string(),
@@ -408,6 +452,7 @@ mod tests {
         save_to(&path, &config).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("opencodeBin"));
+        assert!(!text.contains("agentBin"));
         assert_eq!(load_from(&path), config);
         let _ = std::fs::remove_file(&path);
     }
@@ -504,6 +549,8 @@ mod tests {
             base_dirs: vec!["/a/".to_string(), "/a".to_string()],
             disabled_projects: vec!["/a/Old/".to_string(), "/a/Old".to_string(), "  ".to_string()],
             opencode_bin: Some("  ".to_string()),
+            agent: "hyper".to_string(),
+            agent_bin: Some("  ".to_string()),
             terminal: "hyper".to_string(),
             sort_mode: "CARPETA".to_string(),
             language: "FR".to_string(),
@@ -514,6 +561,8 @@ mod tests {
         assert_eq!(back.base_dirs, vec!["/a".to_string()]);
         assert_eq!(back.disabled_projects, vec!["/a/Old".to_string()]);
         assert_eq!(back.opencode_bin, None);
+        assert_eq!(back.agent, "opencode");
+        assert_eq!(back.agent_bin, None);
         assert_eq!(back.terminal, "ghostty");
         assert_eq!(back.sort_mode, "base");
         assert_eq!(back.language, "en");
@@ -543,5 +592,63 @@ mod tests {
         let mixed = parse_config(r#"{"disabledProjects":["/a/Ok",42,null]}"#).unwrap();
         assert_eq!(mixed.disabled_projects, vec!["/a/Ok".to_string()]);
         assert_eq!(normalize_project_path("/a/Demo/"), "/a/Demo");
+    }
+
+    #[test]
+    fn agent_missing_unknown_or_cased_falls_back() {
+        // Missing values keep the historic `"opencode"` agent; known ids are
+        // kept case-insensitively; anything else falls back to `"opencode"`.
+        assert_eq!(default_agent(), "opencode");
+        let config = parse_config(r#"{"baseDirs":["/a"]}"#).unwrap();
+        assert_eq!(config.agent, "opencode");
+        assert_eq!(config.agent_bin, None);
+        for id in ["opencode", "pi", "claude", "custom"] {
+            let text = format!(r#"{{"agent":"{id}"}}"#);
+            assert_eq!(parse_config(&text).unwrap().agent, id);
+        }
+        let config = parse_config(r#"{"agent":"  Pi "}"#).unwrap();
+        assert_eq!(config.agent, "pi");
+        let config = parse_config(r#"{"agent":"CLAUDE"}"#).unwrap();
+        assert_eq!(config.agent, "claude");
+        let config = parse_config(r#"{"agent":"hyper"}"#).unwrap();
+        assert_eq!(config.agent, "opencode");
+        let config = parse_config(r#"{"agent":""}"#).unwrap();
+        assert_eq!(config.agent, "opencode");
+        assert_eq!(normalize_agent(None), "opencode");
+    }
+
+    #[test]
+    fn agent_bin_camel_and_snake_case_compat() {
+        let camel = parse_config(r#"{"agent":"custom","agentBin":"~/bin/agent"}"#).unwrap();
+        assert_eq!(camel.agent, "custom");
+        assert_eq!(camel.agent_bin.as_deref(), Some("~/bin/agent"));
+        let snake = parse_config(r#"{"agent":"custom","agent_bin":"~/bin/agent"}"#).unwrap();
+        assert_eq!(snake.agent_bin.as_deref(), Some("~/bin/agent"));
+        // Blank entries are dropped without breaking the rest.
+        let blank = parse_config(r#"{"agentBin":"  "}"#).unwrap();
+        assert_eq!(blank.agent_bin, None);
+    }
+
+    #[test]
+    fn none_agent_bin_is_omitted_on_save() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("codedock-save-agent-none-{}.json", std::process::id()));
+        let config = Config {
+            base_dirs: vec!["/a".to_string()],
+            disabled_projects: Vec::new(),
+            opencode_bin: None,
+            agent: "custom".to_string(),
+            agent_bin: None,
+            terminal: "ghostty".to_string(),
+            sort_mode: "name".to_string(),
+            language: "en".to_string(),
+            theme: default_theme(),
+        };
+        save_to(&path, &config).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("agentBin"));
+        assert!(!text.contains("agent_bin"));
+        assert_eq!(load_from(&path), config);
+        let _ = std::fs::remove_file(&path);
     }
 }

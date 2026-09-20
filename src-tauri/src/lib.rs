@@ -1,5 +1,5 @@
 //! CodeDock: menu-bar-only icon listing your
-//! project folders and opening the chosen one in your terminal with opencode.
+//! project folders and opening the chosen one in your terminal with the agent.
 //!
 //! macOS only in this first version. Opening depends on the chosen terminal
 //! (see `terminal`): AppleScript for Ghostty / Terminal.app / iTerm2, URI
@@ -278,7 +278,7 @@ pub(crate) fn refresh_tray(app: &AppHandle) {
 }
 
 fn open_from_tray(app: &AppHandle, index: usize) {
-    let (path, opencode, terminal, language) = {
+    let (path, agent, opencode, agent_bin, terminal, language) = {
         let state = app.state::<AppState>();
         let found = state.last_projects.lock().unwrap();
         let Some(p) = found.get(index).cloned() else {
@@ -287,12 +287,21 @@ fn open_from_tray(app: &AppHandle, index: usize) {
         let config = state.config.lock().unwrap();
         (
             p.path,
+            config.agent.clone(),
             config.opencode_bin.clone(),
+            config.agent_bin.clone(),
             config.terminal.clone(),
             config.language.clone(),
         )
     };
-    if let Err(e) = projects::open_project(&path, opencode.as_deref(), Some(terminal.as_str()), &language)
+    if let Err(e) = projects::open_project(
+        &path,
+        Some(agent.as_str()),
+        opencode.as_deref(),
+        agent_bin.as_deref(),
+        Some(terminal.as_str()),
+        &language,
+    )
     {
         eprintln!("[codedock] open_project: {e}");
         let _ = app.emit("open-error", e);

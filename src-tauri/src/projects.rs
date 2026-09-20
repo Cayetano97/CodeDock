@@ -1,4 +1,4 @@
-//! Projects and opening them in the chosen terminal with opencode (macOS only).
+//! Projects and opening them in the chosen terminal with the agent (macOS only).
 //!
 //! - `list_projects` scans the base folders and returns their direct
 //!   subfolders (no hidden entries), ordered by name.
@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::i18n::{
+    err_agent_custom_missing, err_agent_custom_not_found, err_agent_not_found,
     err_base_unreadable, err_opencode_not_found, err_opencode_override_missing,
     err_project_missing,
 };
@@ -151,6 +152,29 @@ pub fn list_projects(base_dirs: &[String], lang: &str) -> Vec<Project> {
     out
 }
 
+/// First existing file among absolute candidates, if any.
+fn first_existing(candidates: &[String]) -> Option<String> {
+    for c in candidates {
+        if Path::new(c).is_file() {
+            return Some(c.clone());
+        }
+    }
+    None
+}
+
+/// Bare binary lookup on `PATH` (`<dir>/<name>` that is a file).
+fn search_path(name: &str) -> Option<String> {
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
 /// Locates the opencode binary: config override first, then the usual
 /// locations, finally the `PATH`.
 pub fn resolve_opencode(opencode_override: Option<&str>, lang: &str) -> Result<String, String> {
@@ -178,22 +202,62 @@ pub fn resolve_opencode(opencode_override: Option<&str>, lang: &str) -> Result<S
     }
     candidates.push("/opt/homebrew/bin/opencode".to_string());
     candidates.push("/usr/local/bin/opencode".to_string());
-    for c in &candidates {
-        if Path::new(c).is_file() {
-            return Ok(c.clone());
-        }
+    if let Some(found) = first_existing(&candidates) {
+        return Ok(found);
     }
 
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            let candidate = dir.join("opencode");
-            if candidate.is_file() {
-                return Ok(candidate.to_string_lossy().into_owned());
-            }
-        }
+    if let Some(found) = search_path("opencode") {
+        return Ok(found);
     }
 
     Err(err_opencode_not_found(lang))
+}
+
+/// Locates a bare preset binary (v1: `pi`, `claude`): Homebrew prefixes,
+/// then the `PATH`. No arguments, no env, no `sh -c`.
+pub fn resolve_generic_binary(name: &str, lang: &str) -> Result<String, String> {
+    let candidates = vec![
+        format!("/opt/homebrew/bin/{name}"),
+        format!("/usr/local/bin/{name}"),
+    ];
+    if let Some(found) = first_existing(&candidates) {
+        return Ok(found);
+    }
+    if let Some(found) = search_path(name) {
+        return Ok(found);
+    }
+    Err(err_agent_not_found(lang, name))
+}
+
+/// Locates the agent binary for the stored `agent` setting (bare binary
+/// only, no arguments):
+/// - `"opencode"`: the existing opencode lookup (honors `opencodeBin`).
+/// - `"pi"` / `"claude"`: Homebrew prefixes, then the `PATH`.
+/// - `"custom"`: the configured `agentBin` path (tilde-expanded, must be a
+///   file).
+/// - anything else: opencode fallback, same policy as terminal/sort/theme.
+pub fn resolve_agent(
+    agent: Option<&str>,
+    opencode_override: Option<&str>,
+    agent_bin_override: Option<&str>,
+    lang: &str,
+) -> Result<String, String> {
+    match crate::config::normalize_agent(agent).as_str() {
+        "custom" => match agent_bin_override.map(str::trim) {
+            Some(raw) if !raw.is_empty() => {
+                let expanded = expand_tilde(raw);
+                if Path::new(&expanded).is_file() {
+                    Ok(expanded)
+                } else {
+                    Err(err_agent_custom_not_found(lang, &expanded))
+                }
+            }
+            _ => Err(err_agent_custom_missing(lang)),
+        },
+        "pi" => resolve_generic_binary("pi", lang),
+        "claude" => resolve_generic_binary("claude", lang),
+        _ => resolve_opencode(opencode_override, lang),
+    }
 }
 
 /// Escapes a value for interpolation into a quoted AppleScript literal.
@@ -204,9 +268,9 @@ pub fn applescript_escape(value: &str) -> String {
 /// Builds the script that opens the project: new tab when Ghostty already
 /// has a window, new window when there is none (or Ghostty is closed, in
 /// which case `tell` launches it).
-pub fn build_open_script(project_path: &str, opencode_bin: &str) -> Vec<String> {
+pub fn build_open_script(project_path: &str, agent_bin: &str) -> Vec<String> {
     let path = applescript_escape(project_path);
-    let bin = applescript_escape(opencode_bin);
+    let bin = applescript_escape(agent_bin);
     vec![
         "tell application \"Ghostty\"".to_string(),
         "set cfg to new surface configuration".to_string(),
@@ -222,11 +286,14 @@ pub fn build_open_script(project_path: &str, opencode_bin: &str) -> Vec<String> 
     ]
 }
 
-/// Opens the project in the configured terminal with opencode inside.
-/// `terminal` is the id stored in config (`None` = Ghostty).
+/// Opens the project in the configured terminal with the selected agent inside.
+/// `agent` is the id stored in config (`None` = opencode); `terminal` is the
+/// id stored in config (`None` = Ghostty).
 pub fn open_project(
     project_path: &str,
+    agent: Option<&str>,
     opencode_override: Option<&str>,
+    agent_bin_override: Option<&str>,
     terminal: Option<&str>,
     lang: &str,
 ) -> Result<(), String> {
@@ -234,7 +301,7 @@ pub fn open_project(
     if expanded.is_empty() || !Path::new(&expanded).is_dir() {
         return Err(err_project_missing(lang, project_path));
     }
-    let bin = resolve_opencode(opencode_override, lang)?;
+    let bin = resolve_agent(agent, opencode_override, agent_bin_override, lang)?;
     crate::terminal::open_in_terminal(terminal.unwrap_or("ghostty"), &expanded, &bin, lang)
 }
 
@@ -402,8 +469,93 @@ mod tests {
 
     #[test]
     fn open_project_rejects_missing_folders_without_touching_terminals() {
-        let err = open_project("/codedock-__no_such__", None, None, "en").unwrap_err();
+        let err = open_project("/codedock-__no_such__", None, None, None, None, "en").unwrap_err();
         assert!(err.contains("no longer exists"));
+    }
+
+    #[test]
+    fn resolve_agent_opencode_honors_override() {
+        let dir = std::env::temp_dir().join(format!("codedock-agent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("opencode");
+        std::fs::write(&fake, "#!/bin/sh").unwrap();
+        let got = resolve_agent(
+            Some("opencode"),
+            Some(fake.to_str().unwrap()),
+            None,
+            "en",
+        )
+        .unwrap();
+        assert_eq!(got, fake.to_string_lossy());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_agent_unknown_falls_back_to_opencode_override() {
+        let dir =
+            std::env::temp_dir().join(format!("codedock-agent-fb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("opencode");
+        std::fs::write(&fake, "#!/bin/sh").unwrap();
+        let got = resolve_agent(Some("hyper"), Some(fake.to_str().unwrap()), None, "en").unwrap();
+        assert_eq!(got, fake.to_string_lossy());
+        // Missing/empty agent also means opencode.
+        let got = resolve_agent(None, Some(fake.to_str().unwrap()), None, "en").unwrap();
+        assert_eq!(got, fake.to_string_lossy());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_agent_custom_requires_existing_file() {
+        let dir =
+            std::env::temp_dir().join(format!("codedock-agent-cu-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("my-agent");
+        std::fs::write(&fake, "#!/bin/sh").unwrap();
+        let got = resolve_agent(
+            Some("custom"),
+            None,
+            Some(fake.to_str().unwrap()),
+            "en",
+        )
+        .unwrap();
+        assert_eq!(got, fake.to_string_lossy());
+        // Missing path: clear error in both languages.
+        let err = resolve_agent(Some("custom"), None, None, "en").unwrap_err();
+        assert!(err.contains("Custom agent path"));
+        let err_es = resolve_agent(Some("custom"), None, Some("  "), "es").unwrap_err();
+        assert!(err_es.contains("agente personalizada"));
+        // Pointing nowhere: clear error in both languages.
+        let err = resolve_agent(
+            Some("  Custom "),
+            None,
+            Some("/codedock-__no_such__/agent"),
+            "en",
+        )
+        .unwrap_err();
+        assert!(err.contains("does not exist"));
+        let err_es = resolve_agent(
+            Some("custom"),
+            None,
+            Some("/codedock-__no_such__/agent"),
+            "es",
+        )
+        .unwrap_err();
+        assert!(err_es.contains("No existe"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_agent_preset_not_found_names_the_binary() {
+        // No PATH mutation: with an empty PATH prefix both presets report a
+        // clear error naming the binary (both languages).
+        let err = resolve_generic_binary("codedock-__no_such_bin__", "en").unwrap_err();
+        assert!(err.contains("codedock-__no_such_bin__"));
+        let err_es = resolve_generic_binary("codedock-__no_such_bin__", "es").unwrap_err();
+        assert!(err_es.contains("codedock-__no_such_bin__"));
     }
 
     #[test]

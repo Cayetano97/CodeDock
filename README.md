@@ -6,7 +6,7 @@
 
 <p align="center">
   A macOS menu-bar icon that lists your projects
-  and opens the chosen one in your favorite terminal with opencode inside.
+  and opens the chosen one in your favorite terminal with your AI agent inside.
   I built this because I never liked juggling shell aliases for this.
   <br />
   <strong>Status: alpha — macOS only for now.</strong>
@@ -24,8 +24,9 @@
 
 CodeDock lives in the menu bar.
 Point it at one or more base folders and every subfolder shows up as a project:
-click one and it opens in your chosen terminal with
-[opencode](https://opencode.ai) running inside.
+click one and it opens in your chosen terminal with your agent running inside —
+[opencode](https://opencode.ai) by default, or Pi, Claude Code and any custom
+binary from Settings.
 
 ## Supported terminals
 
@@ -42,15 +43,15 @@ selectable in case you install them later.
 | Terminal.app | AppleScript `do script "cd … && exec …"`                                           | Always a new window (no tab API)                         |
 | iTerm2     | AppleScript `create window/tab …` + `write text` ([docs](https://iterm2.com/documentation-scripting.html)) | New tab in the current window; new window if none |
 | Warp       | URI scheme `warp://action/new_tab?path=…` ([docs](https://docs.warp.dev/terminal/more-features/uri-scheme/)) | New tab if running; new window on cold start |
-| Alacritty  | CLI: `alacritty --working-directory <dir> -e <opencode>`                              | Always a new window (Alacritty has no tabs)              |
-| Kitty      | CLI: `kitty --directory <dir> <opencode>`                                            | Always a new OS window (tabs would need remote control in `kitty.conf`) |
-| WezTerm    | CLI: `wezterm cli spawn --cwd <dir> -- <opencode>`, falling back to `wezterm start` ([docs](https://wezterm.org/cli/cli/spawn.html)) | New tab if running; new window on cold start |
+| Alacritty  | CLI: `alacritty --working-directory <dir> -e <agent>`                              | Always a new window (Alacritty has no tabs)              |
+| Kitty      | CLI: `kitty --directory <dir> <agent>`                                            | Always a new OS window (tabs would need remote control in `kitty.conf`) |
+| WezTerm    | CLI: `wezterm cli spawn --cwd <dir> -- <agent>`, falling back to `wezterm start` ([docs](https://wezterm.org/cli/cli/spawn.html)) | New tab if running; new window on cold start |
 
 > **Warp limitation:** Warp's URI scheme can only open a folder — it cannot
 > run a command in the new tab (see
 > [warpdotdev/Warp#5859](https://github.com/warpdotdev/Warp/issues/5859) and
 > [#5405](https://github.com/warpdotdev/Warp/issues/5405)). With Warp,
-> CodeDock opens the project folder and you run `opencode` yourself. The app
+> CodeDock opens the project folder and you run your agent yourself. The app
 > shows a hint under the picker when Warp is selected.
 
 `open -a <Terminal> --args …` is deliberately not used: most terminals ignore
@@ -67,6 +68,8 @@ are dropped without breaking the rest.
 {
   "baseDirs": ["/Users/you/Documents/Programs"],
   "disabledProjects": ["/Users/you/Documents/Programs/OldDemo"],
+  "agent": "opencode",
+  "agentBin": null,
   "opencodeBin": null,
   "terminal": "ghostty",
   "sortMode": "name",
@@ -79,7 +82,9 @@ are dropped without breaking the rest.
 | ------------- | ------------------------------------------------------------------ |
 | `baseDirs`    | Parent folders; each direct (non-hidden) subfolder is a project    |
 | `disabledProjects` | Project paths hidden from the window list and the menu-bar menu (managed in the "Visible projects" panel with Select all / Select none, per folder and globally; missing = everything visible) |
-| `opencodeBin` | Path to the opencode binary; `null` = auto-detect only             |
+| `agent`       | Which agent runs in the terminal: `"opencode"` (default), `"pi"`, `"claude"`, or `"custom"` (bare binary, no arguments); unknown/missing = `"opencode"` |
+| `agentBin`    | Path to the custom agent binary (used only when `agent` = `"custom"`); `null` = unset |
+| `opencodeBin` | Path to the opencode binary (only used when `agent` = `"opencode"`); `null` = auto-detect only |
 | `terminal`    | One of `ghostty`, `terminal`, `iterm2`, `warp`, `alacritty`, `kitty`, `wezterm`; unknown/missing = `ghostty` |
 | `sortMode`    | `"name"` = global alphabetical; `"base"` = grouped by base folder (then name); unknown/missing = `"name"` |
 | `language`    | `"auto"` = follow the system (default); `"en"` = English; `"es"` = Spanish; unknown explicit values = `"en"` (also accepts locale tags like `es-ES`) |
@@ -95,9 +100,10 @@ are dropped without breaking the rest.
 - **Backend** — `cargo test` (in `src-tauri/`): tolerant config parsing
   (defaults, `snake_case` compat, per-field fallbacks, one sanitizing
   round-trip, unknown keys ignored), folder scanning (ordering, hidden, files,
-  missing bases), `~` expansion, opencode binary resolution (override vs
-  auto-detect, localized errors), per-terminal script/argv builders plus
-  terminal detection — all without launching any terminal.
+  missing bases), `~` expansion, agent resolution (opencode override,
+  `pi`/`claude` presets, custom binary, localized errors), per-terminal
+  script/argv builders plus terminal detection — all without launching any
+  terminal.
 
 
 ## License
