@@ -28,8 +28,9 @@ import {
   baseLabel,
   clampIndex,
   disableAllProjects,
+  disabledProjectSet,
   getVisibleProjects,
-  isProjectDisabled,
+  isProjectDisabledInSet,
   moveSelection,
   normalizeBaseDir,
   normalizeProjectPath,
@@ -108,6 +109,10 @@ let projects: Project[] = [];
 let allProjects: Project[] = [];
 let visible: Project[] = [];
 let selected = -1;
+/** Project rows painted by the last `renderProjects` (group headers excluded). */
+let renderedRows: HTMLElement[] = [];
+/** Row index that currently carries the selection paint. */
+let paintedSelection = -1;
 let errorTimer = 0;
 // OS login-item state (source of truth, like QuickSpot): not stored in
 // `codedock.config.json`, read via `isEnabled()` and applied via
@@ -693,8 +698,7 @@ function renderTerminalOptions(): void {
 }
 
 function scrollSelectedIntoView(): void {
-  const el = list.querySelector<HTMLElement>("li.selected");
-  el?.scrollIntoView({ block: "nearest" });
+  renderedRows[selected]?.scrollIntoView({ block: "nearest" });
 }
 
 function paintBaseTint(el: HTMLElement, base: string): void {
@@ -721,7 +725,18 @@ function renderProjects(): void {
   }
 
   list.replaceChildren();
+  renderedRows = [];
+  paintedSelection = selected;
   const grouped = config.sortMode === "base";
+  // One pass for group counts: `visible.filter(...)` inside the loop was
+  // O(n × groups) (125k comparisons for a 5k list with 25 bases on every
+  // keystroke).
+  const groupCounts = new Map<string, number>();
+  if (grouped) {
+    for (const p of visible) {
+      groupCounts.set(p.base, (groupCounts.get(p.base) ?? 0) + 1);
+    }
+  }
   let lastBase: string | null = null;
   visible.forEach((p, i) => {
     // In by-folder view, a group header with label + count.
@@ -729,7 +744,7 @@ function renderProjects(): void {
     // and screen readers (color is never the only signal).
     if (grouped && p.base !== lastBase) {
       lastBase = p.base;
-      const groupCount = visible.filter((v) => v.base === p.base).length;
+      const groupCount = groupCounts.get(p.base) ?? 0;
       const header = document.createElement("li");
       header.className = "group-header";
       header.setAttribute("role", "presentation");
@@ -773,6 +788,7 @@ function renderProjects(): void {
     });
     li.appendChild(btn);
     list.appendChild(li);
+    renderedRows.push(li);
   });
 
   search.setAttribute(
@@ -792,17 +808,24 @@ function renderProjects(): void {
 }
 
 function syncSelection(): void {
-  // Only project rows (`li[data-base]`): group headers
-  // (`li.group-header`) are not selectable and do not count for the index.
-  const items = list.querySelectorAll("li[data-base]");
-  items.forEach((li, i) => {
-    const active = i === selected;
+  // Only the previous and the new row are touched. The old implementation
+  // re-queried and re-painted every row on each arrow key (O(n) DOM writes
+  // per keystroke); `renderedRows` is rebuilt by `renderProjects`, so the
+  // cached nodes never go stale.
+  const paint = (index: number, active: boolean): void => {
+    const li = renderedRows[index];
+    if (!li) return;
     li.classList.toggle("selected", active);
     li.querySelector("button")?.setAttribute(
       "aria-selected",
       active ? "true" : "false",
     );
-  });
+  };
+  if (paintedSelection !== selected) {
+    paint(paintedSelection, false);
+    paint(selected, true);
+    paintedSelection = selected;
+  }
   search.setAttribute(
     "aria-activedescendant",
     selected >= 0 ? `proj-${String(selected)}` : "",
@@ -851,12 +874,26 @@ function renderBases(): void {
  * Pure DOM paint from `allProjects` + `config.disabledProjects`.
  */
 function renderVisibility(): void {
-  const disabled = sanitizeDisabledProjects(config.disabledProjects);
   const ordered = sortProjects([...allProjects], "base");
   visibilityList.replaceChildren();
 
+  // Normalize the disabled list once, then evaluate each project once:
+  // the old code ran `isProjectDisabled` twice per project (each call
+  // normalized every disabled entry) plus a filter per group header.
+  const disabledSet = disabledProjectSet(config.disabledProjects);
+  const offByPath = new Map<string, boolean>();
+  const groupEnabled = new Map<string, number>();
+  const groupTotal = new Map<string, number>();
+  let enabledCount = 0;
+  for (const p of ordered) {
+    const off = isProjectDisabledInSet(p.path, disabledSet);
+    offByPath.set(p.path, off);
+    if (!off) enabledCount += 1;
+    groupTotal.set(p.base, (groupTotal.get(p.base) ?? 0) + 1);
+    if (!off) groupEnabled.set(p.base, (groupEnabled.get(p.base) ?? 0) + 1);
+  }
+
   const total = ordered.length;
-  const enabledCount = ordered.filter((p) => !isProjectDisabled(p.path, disabled)).length;
 
   if (visibilityStatus) {
     visibilityStatus.textContent =
@@ -874,34 +911,34 @@ function renderVisibility(): void {
   for (const p of ordered) {
     if (p.base !== lastBase) {
       lastBase = p.base;
-      const groupItems = ordered.filter((v) => v.base === p.base);
-      const groupEnabled = groupItems.filter((v) => !isProjectDisabled(v.path, disabled)).length;
+      const groupItems = groupTotal.get(p.base) ?? 0;
+      const groupOn = groupEnabled.get(p.base) ?? 0;
       const header = document.createElement("li");
       header.className = "vis-group-header";
       header.setAttribute("role", "presentation");
       paintBaseTint(header, p.base);
       const label = document.createElement("span");
       label.className = "vis-group-label";
-      label.textContent = `${baseLabel(p.base)} · ${String(groupEnabled)}/${String(groupItems.length)}`;
+      label.textContent = `${baseLabel(p.base)} · ${String(groupOn)}/${String(groupItems)}`;
       label.title = p.base;
       const allBtn = document.createElement("button");
       allBtn.type = "button";
       allBtn.className = "vis-group-btn";
       allBtn.textContent = t("visibility.groupSelectAll");
-      allBtn.disabled = groupEnabled === groupItems.length;
+      allBtn.disabled = groupOn === groupItems;
       allBtn.setAttribute("aria-label", `${t("visibility.selectAll")}: ${baseLabel(p.base)}`);
       allBtn.addEventListener("click", () => void setGroupVisibility(p.base, true));
       const noneBtn = document.createElement("button");
       noneBtn.type = "button";
       noneBtn.className = "vis-group-btn";
       noneBtn.textContent = t("visibility.groupSelectNone");
-      noneBtn.disabled = groupEnabled === 0;
+      noneBtn.disabled = groupOn === 0;
       noneBtn.setAttribute("aria-label", `${t("visibility.selectNone")}: ${baseLabel(p.base)}`);
       noneBtn.addEventListener("click", () => void setGroupVisibility(p.base, false));
       header.append(label, allBtn, noneBtn);
       visibilityList.appendChild(header);
     }
-    const off = isProjectDisabled(p.path, disabled);
+    const off = offByPath.get(p.path) ?? false;
     const li = document.createElement("li");
     li.className = off ? "vis-row is-off" : "vis-row";
     paintBaseTint(li, p.base);
@@ -924,7 +961,8 @@ function renderVisibility(): void {
 
 /** Applies the disabled list locally for instant feedback (no backend yet). */
 function applyLocalVisibility(): void {
-  projects = sortProjects(applyDisabledFilter(allProjects, config.disabledProjects), config.sortMode);
+  // `renderProjects` filters + sorts once; pre-sorting here sorted twice.
+  projects = applyDisabledFilter(allProjects, config.disabledProjects);
   renderProjects();
   renderVisibility();
 }

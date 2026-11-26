@@ -1,10 +1,11 @@
 //! IPC commands exposed to the webview.
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::config::{self, Config};
-use crate::i18n::normalize_language_setting;use crate::projects::{self, Project};
+use crate::i18n::normalize_language_setting;
+use crate::projects::{self, Project};
 use crate::terminal::{self, TerminalInfo};
 use crate::AppState;
 
@@ -82,6 +83,7 @@ pub fn list_all_projects(state: State<'_, AppState>) -> Vec<Project> {
 /// refreshes as soon as a base is added, without a second
 /// `invoke("list_projects")` from the frontend (`Emitter::emit` pattern from
 /// the current Tauri v2 docs).
+#[allow(clippy::too_many_arguments)] // Each argument is an explicit IPC field.
 #[tauri::command]
 pub fn save_config(
     app: AppHandle,
@@ -125,9 +127,15 @@ pub fn save_config(
 }
 
 /// Opens the project in the configured terminal with the selected agent inside.
+///
+/// Async + `spawn_blocking`: resolving the agent and running `osascript` /
+/// the terminal CLI takes 60–200 ms (process spawn + app activation), which
+/// used to block the webview main thread and froze the palette while the
+/// terminal was opening.
 #[tauri::command]
-pub fn open_project(state: State<'_, AppState>, path: String) -> Result<(), String> {
+pub async fn open_project(app: AppHandle, path: String) -> Result<(), String> {
     let (agent, opencode, agent_bin, terminal, language) = {
+        let state = app.state::<AppState>();
         let config = state.config.lock().unwrap();
         (
             config.agent.clone(),
@@ -137,14 +145,18 @@ pub fn open_project(state: State<'_, AppState>, path: String) -> Result<(), Stri
             config.language.clone(),
         )
     };
-    projects::open_project(
-        &path,
-        Some(agent.as_str()),
-        opencode.as_deref(),
-        agent_bin.as_deref(),
-        Some(terminal.as_str()),
-        &language,
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        projects::open_project(
+            &path,
+            Some(agent.as_str()),
+            opencode.as_deref(),
+            agent_bin.as_deref(),
+            Some(terminal.as_str()),
+            &language,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Supported terminals and whether they are installed (for the UI picker).

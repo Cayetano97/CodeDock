@@ -3,6 +3,7 @@
 //! A missing file or invalid JSON falls back to defaults. Individually
 //! invalid entries are dropped without breaking the rest, like QuickSpot.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,7 @@ use crate::terminal::{default_terminal, normalize_terminal};
 /// How projects are ordered in the window and the tray menu:
 /// - `"name"`: global alphabetical by project name (historic behavior).
 /// - `"base"`: grouped by base folder (alphabetical) then by name.
+///
 /// Unknown or missing values fall back to `"name"` to break nothing.
 pub fn default_sort_mode() -> String {
     "name".to_string()
@@ -130,26 +132,37 @@ fn default_base_dirs() -> Vec<String> {
     Vec::new()
 }
 
+/// Normalizes a base folder without allocating: trims and drops trailing `/`
+/// (except root `/`). Internal fast path shared by the owned version and the
+/// disabled-project checks, which compare borrowed slices (no per-project
+/// `String` allocation on every scan).
+pub(crate) fn normalized_base_dir(dir: &str) -> &str {
+    let trimmed = dir.trim();
+    if trimmed.len() <= 1 {
+        return trimmed;
+    }
+    let stripped = trimmed.trim_end_matches('/');
+    if stripped.is_empty() {
+        trimmed
+    } else {
+        stripped
+    }
+}
+
 /// Normalizes a base folder: trims and drops trailing `/` (except root `/`),
 /// so `/a` and `/a/` do not count as different bases.
 pub fn normalize_base_dir(dir: &str) -> String {
-    let trimmed = dir.trim();
-    if trimmed.len() > 1 {
-        let stripped = trimmed.trim_end_matches('/');
-        if !stripped.is_empty() {
-            return stripped.to_string();
-        }
-    }
-    trimmed.to_string()
+    normalized_base_dir(dir).to_string()
 }
 
 /// Cleans the folder list: trims, drops trailing `/`, removes empty and
 /// duplicated entries regardless of arrival order.
 pub fn sanitize_base_dirs(dirs: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(dirs.len());
+    let mut seen: HashSet<String> = HashSet::with_capacity(dirs.len());
     for d in dirs {
         let normalized = normalize_base_dir(&d);
-        if normalized.is_empty() || out.contains(&normalized) {
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
             continue;
         }
         out.push(normalized);
@@ -164,15 +177,21 @@ pub fn normalize_project_path(path: &str) -> String {
     normalize_base_dir(path)
 }
 
+/// Borrowed variant of `normalize_project_path` for O(1)-allocation lookups.
+pub(crate) fn normalized_project_path(path: &str) -> &str {
+    normalized_base_dir(path)
+}
+
 /// Cleans the disabled-project list: trims, drops trailing `/`, removes empty
 /// and duplicated entries regardless of arrival order. Stale entries (projects
 /// that no longer exist) are kept: they are harmless and avoid re-enabling a
 /// temporarily missing folder on the next scan.
 pub fn sanitize_disabled_projects(paths: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(paths.len());
+    let mut seen: HashSet<String> = HashSet::with_capacity(paths.len());
     for p in paths {
         let normalized = normalize_project_path(&p);
-        if normalized.is_empty() || out.contains(&normalized) {
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
             continue;
         }
         out.push(normalized);

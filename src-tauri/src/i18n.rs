@@ -54,30 +54,15 @@ pub fn is_spanish(lang: &str) -> bool {
 }
 
 /// Normalizes a language tag from config or UI: trims, lowercases and maps
-/// `es*` -> `"es"`, `en*` -> `"en"`, everything else -> `"en"` (fallback).
+/// `es*` -> `"es"`, everything else -> `"en"` (fallback). Prefix-based so
+/// `es-ES`, `es_MX`, `en-US` and even a localized `Español` resolve to their
+/// base language.
 pub fn normalize_language(raw: Option<&str>) -> String {
     let id = raw.unwrap_or_default().trim().to_lowercase();
-    // Accept locale tags such as `es-ES`, `es_MX` or `en-US`.
-    let base: String = id
-        .chars()
-        .take_while(|c| c.is_ascii_alphabetic())
-        .collect();
-    match base.as_str() {
-        "es" => "es".to_string(),
-        "en" => "en".to_string(),
-        _ => {
-            // Also accept the full tag prefix (`es-...` was already reduced to
-            // `es` above, but keep a starts_with guard for separators).
-            // Unknown tags fall back to English (never to "auto": this is the
-            // effective tag normalizer, not the stored-setting one).
-            if id.starts_with("es") {
-                "es".to_string()
-            } else if id.starts_with("en") {
-                "en".to_string()
-            } else {
-                "en".to_string()
-            }
-        }
+    if id.starts_with("es") {
+        "es".to_string()
+    } else {
+        "en".to_string()
     }
 }
 

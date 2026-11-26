@@ -16,11 +16,12 @@ export function normalizeQuery(query: string): string {
  */
 export function normalizeBaseDir(dir: string): string {
   const trimmed = dir.trim();
-  if (trimmed.length > 1) {
-    const stripped = trimmed.replace(/\/+$/, "");
-    if (stripped !== "") return stripped;
-  }
-  return trimmed;
+  if (trimmed.length <= 1) return trimmed;
+  // Fast path for already-normalized paths (the common case: every scanned
+  // project and every stored base comes normalized from the backend).
+  if (!trimmed.endsWith("/")) return trimmed;
+  const stripped = trimmed.replace(/\/+$/, "");
+  return stripped === "" ? trimmed : stripped;
 }
 
 /**
@@ -48,16 +49,40 @@ export function sanitizeDisabledProjects(paths: unknown): string[] {
   return out;
 }
 
+/**
+ * Normalizes a disabled list once into a `Set` so repeated checks are O(1).
+ * Used by the visibility manager, which evaluates every project twice per
+ * render: without the set that was O(projects × disabled) path allocations
+ * (≈67 ms for 5k projects with 100 disabled).
+ */
+export function disabledProjectSet(disabled: readonly string[]): Set<string> {
+  const set = new Set<string>();
+  for (const entry of disabled) {
+    const normalized = normalizeProjectPath(entry);
+    if (normalized !== "") set.add(normalized);
+  }
+  return set;
+}
+
+/** Whether a project path is in a pre-normalized disabled set. */
+export function isProjectDisabledInSet(
+  projectPath: string,
+  disabled: ReadonlySet<string>,
+): boolean {
+  return disabled.has(normalizeProjectPath(projectPath));
+}
+
 /** Whether a project path is in the disabled list (hidden everywhere). */
 export function isProjectDisabled(projectPath: string, disabled: readonly string[]): boolean {
   const normalized = normalizeProjectPath(projectPath);
-  return disabled.some((d) => normalizeProjectPath(d) === normalized);
+  return disabled.some((entry) => normalizeProjectPath(entry) === normalized);
 }
 
 /** Removes disabled projects from a list (does not mutate the input). */
 export function applyDisabledFilter(projects: Project[], disabled: readonly string[]): Project[] {
   if (disabled.length === 0) return [...projects];
-  return projects.filter((p) => !isProjectDisabled(p.path, disabled));
+  const disabledSet = disabledProjectSet(disabled);
+  return projects.filter((p) => !isProjectDisabledInSet(p.path, disabledSet));
 }
 
 /**
@@ -128,33 +153,58 @@ export function baseLabel(base: string): string {
 }
 
 /**
+ * Cached collator: `String.prototype.localeCompare` resolves a collator on
+ * every call, which dominated the by-folder sort (18.5 ms for 5k projects).
+ * Default options match `localeCompare()` (same locale, sensitivity, numerics).
+ */
+const collator = new Intl.Collator();
+function compareText(a: string, b: string): number {
+  return a === b ? 0 : collator.compare(a, b);
+}
+
+/**
  * Sorts projects without mutating the original array.
  * - `"name"`: global alphabetical by name (case-insensitive), then path.
  * - `"base"`: by base folder label, then base path, then name.
+ *
+ * Lowercase keys are computed once per project (decorate → sort → undecorate)
+ * instead of twice per comparison: the old by-folder path allocated a regex
+ * `baseLabel` + up to four lowercase strings on every one of the ~60k
+ * comparisons in a 5k list.
  */
 export function sortProjects(projects: Project[], mode: SortMode): Project[] {
-  const out = [...projects];
   if (mode === "base") {
-    out.sort((a, b) => {
-      const labelCmp = baseLabel(a.base)
-        .toLowerCase()
-        .localeCompare(baseLabel(b.base).toLowerCase());
+    const rows = projects.map((project) => ({
+      project,
+      label: baseLabel(project.base).toLowerCase(),
+      base: project.base.toLowerCase(),
+      name: project.name.toLowerCase(),
+    }));
+    rows.sort((a, b) => {
+      const labelCmp = compareText(a.label, b.label);
       if (labelCmp !== 0) return labelCmp;
-      const baseCmp = a.base.toLowerCase().localeCompare(b.base.toLowerCase());
+      const baseCmp = compareText(a.base, b.base);
       if (baseCmp !== 0) return baseCmp;
-      const nameCmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+      const nameCmp = compareText(a.name, b.name);
       if (nameCmp !== 0) return nameCmp;
-      if (a.name !== b.name) return a.name < b.name ? -1 : 1;
-      return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+      if (a.project.name !== b.project.name) {
+        return a.project.name < b.project.name ? -1 : 1;
+      }
+      return a.project.path < b.project.path ? -1 : a.project.path > b.project.path ? 1 : 0;
     });
-  } else {
-    out.sort((a, b) => {
-      const nameCmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-      if (nameCmp !== 0) return nameCmp;
-      return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
-    });
+    return rows.map((row) => row.project);
   }
-  return out;
+
+  const rows = projects.map((project) => ({
+    project,
+    name: project.name.toLowerCase(),
+  }));
+  rows.sort((a, b) => {
+    const nameCmp = compareText(a.name, b.name);
+    if (nameCmp !== 0) return nameCmp;
+    return a.project.path < b.project.path ? -1 : a.project.path > b.project.path ? 1 : 0;
+  });
+  return rows.map((row) => row.project);
 }
 
 /**

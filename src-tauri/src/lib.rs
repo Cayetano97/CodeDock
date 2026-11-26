@@ -11,7 +11,7 @@ mod i18n;
 mod projects;
 mod terminal;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use tauri::image::Image;
@@ -98,12 +98,16 @@ fn tray_dot_rgba(accent: (u8, u8, u8)) -> Vec<u8> {
 }
 
 /// Generates the 8 cached dot `Image`s (one per palette slot) for a menu
-/// rebuild. Runtime generation avoids binary bloat from PNG assets.
-fn tray_dot_images() -> Vec<Image<'static>> {
-    TRAY_DOT_ACCENTS
-        .iter()
-        .map(|&accent| Image::new_owned(tray_dot_rgba(accent), TRAY_DOT_SIZE, TRAY_DOT_SIZE))
-        .collect()
+/// rebuild. Generated once per process (`OnceLock`): every tray refresh used
+/// to regenerate all 8 anti-aliased buffers (~32 µs per rebuild).
+fn tray_dot_images() -> &'static [Image<'static>] {
+    static DOTS: std::sync::OnceLock<Vec<Image<'static>>> = std::sync::OnceLock::new();
+    DOTS.get_or_init(|| {
+        TRAY_DOT_ACCENTS
+            .iter()
+            .map(|&accent| Image::new_owned(tray_dot_rgba(accent), TRAY_DOT_SIZE, TRAY_DOT_SIZE))
+            .collect()
+    })
 }
 
 /// macOS: LaunchAgent plist (`~/Library/LaunchAgents`) instead of an
@@ -155,6 +159,13 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// Whether a comma-separated `System Events` login-item listing contains the
+/// legacy item name (exact, trimmed match).
+#[cfg(target_os = "macos")]
+fn legacy_login_item_listed(names: &str, wanted: &str) -> bool {
+    names.split(',').any(|name| name.trim() == wanted)
+}
+
 /// Removes a legacy AppleScript login item left by versions that used
 /// `MacosLauncher::AppleScript`, so enabling autostart never yields duplicate
 /// entries. The old item is named after the `.app` bundle (`CodeDock`); the
@@ -162,10 +173,21 @@ fn show_main(app: &AppHandle) {
 /// found and no LaunchAgent entry exists yet, the LaunchAgent entry is
 /// enabled first to preserve the user's choice. Best-effort: failures are
 /// ignored.
+///
+/// The check shells out to `osascript`/System Events, measured at 170–840 ms
+/// per launch, and used to run synchronously in `setup` on every boot. A
+/// one-time marker in the app config dir removes that cost from every launch
+/// after the first check. A failed check (no stdout/success) writes no marker
+/// so the next launch retries.
 #[cfg(target_os = "macos")]
-fn migrate_legacy_applescript_login_item(app: &AppHandle) {
+fn migrate_legacy_applescript_login_item(app: &AppHandle, config_dir: &Path) {
     const LEGACY_NAME: &str = "CodeDock";
-    let has_legacy = std::process::Command::new("osascript")
+    const MARKER: &str = ".legacy-login-item-checked";
+    let marker = config_dir.join(MARKER);
+    if marker.is_file() {
+        return;
+    }
+    let names = std::process::Command::new("osascript")
         .args([
             "-e",
             "tell application \"System Events\" to get the name of every login item",
@@ -178,10 +200,13 @@ fn migrate_legacy_applescript_login_item(app: &AppHandle) {
             } else {
                 None
             }
-        })
-        .map(|names| names.split(',').any(|name| name.trim() == LEGACY_NAME))
-        .unwrap_or(false);
-    if !has_legacy {
+        });
+    let Some(names) = names else {
+        return;
+    };
+    // The check ran (with or without a legacy item): never pay for it again.
+    let _ = std::fs::write(&marker, "1");
+    if !legacy_login_item_listed(&names, LEGACY_NAME) {
         return;
     }
     if let Ok(enabled) = app.autolaunch().is_enabled() {
@@ -294,19 +319,25 @@ fn open_from_tray(app: &AppHandle, index: usize) {
             config.language.clone(),
         )
     };
-    if let Err(e) = projects::open_project(
-        &path,
-        Some(agent.as_str()),
-        opencode.as_deref(),
-        agent_bin.as_deref(),
-        Some(terminal.as_str()),
-        &language,
-    )
-    {
-        eprintln!("[codedock] open_project: {e}");
-        let _ = app.emit("open-error", e);
-        show_main(app);
-    }
+    // Off the menu/main thread: opening spawns osascript or a terminal CLI
+    // (60–200 ms), which would freeze the tray menu and the window while the
+    // terminal activates. Errors hop back to the main thread to show the UI.
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = projects::open_project(
+            &path,
+            Some(agent.as_str()),
+            opencode.as_deref(),
+            agent_bin.as_deref(),
+            Some(terminal.as_str()),
+            &language,
+        ) {
+            eprintln!("[codedock] open_project: {e}");
+            let _ = handle.emit("open-error", e);
+            let for_main = handle.clone();
+            let _ = handle.run_on_main_thread(move || show_main(&for_main));
+        }
+    });
 }
 
 fn reload_from_tray(app: &AppHandle) {
@@ -435,7 +466,7 @@ pub fn run() {
             refresh_tray(app.handle());
 
             #[cfg(target_os = "macos")]
-            migrate_legacy_applescript_login_item(app.handle());
+            migrate_legacy_applescript_login_item(app.handle(), &config_dir);
 
             if autostart_launch {
                 // Login launch: tray only. No show, no focus steal. Position
@@ -499,5 +530,14 @@ mod tests {
         let cx = size / 2;
         let off = (cx * size + cx) * 4;
         assert_eq!(&rgba[off..off + 4], &[0x7a, 0xa9, 0xff, 0xff]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_login_item_listing_matches_trimmed_names() {
+        assert!(legacy_login_item_listed("CodeDock, Other", "CodeDock"));
+        assert!(legacy_login_item_listed(" Other ,CodeDock ", "CodeDock"));
+        assert!(!legacy_login_item_listed("CodeDockBeta, Other", "CodeDock"));
+        assert!(!legacy_login_item_listed("", "CodeDock"));
     }
 }

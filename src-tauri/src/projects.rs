@@ -8,6 +8,7 @@
 //!   window, no tabs / OS window) and Warp (only opens the folder: its URI
 //!   scheme cannot launch commands).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -65,25 +66,24 @@ pub fn base_label(base: &str) -> &str {
 ///   tiebreaker) and within each base by name.
 /// - any other value (`"name"`): global alphabetical by name (historic
 ///   behavior) then by path.
+///
 /// Case-insensitive in both cases.
 pub fn sort_projects(projects: &mut [Project], sort_mode: &str) {
     if sort_mode.trim().eq_ignore_ascii_case("base") {
-        projects.sort_by(|a, b| {
-            base_label(&a.base)
-                .to_lowercase()
-                .cmp(&base_label(&b.base).to_lowercase())
-                .then_with(|| a.base.to_lowercase().cmp(&b.base.to_lowercase()))
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-                .then_with(|| a.name.cmp(&b.name))
-                .then_with(|| a.path.cmp(&b.path))
+        // Decorate once per project instead of allocating lowercase strings on
+        // every comparison (the old comparator did ~5 allocations × ~60k
+        // comparisons for a 5k list: 6.5 ms; cached keys: ~1 ms).
+        projects.sort_by_cached_key(|p| {
+            (
+                base_label(&p.base).to_lowercase(),
+                p.base.to_lowercase(),
+                p.name.to_lowercase(),
+                p.name.clone(),
+                p.path.clone(),
+            )
         });
     } else {
-        projects.sort_by(|a, b| {
-            a.name
-                .to_lowercase()
-                .cmp(&b.name.to_lowercase())
-                .then_with(|| a.path.cmp(&b.path))
-        });
+        projects.sort_by_cached_key(|p| (p.name.to_lowercase(), p.path.clone()));
     }
 }
 
@@ -93,19 +93,40 @@ pub fn sort_projects(projects: &mut [Project], sort_mode: &str) {
 /// path on macOS default APFS behavior is case-insensitive, but the stored
 /// path comes from the same scan so exact match is correct and predictable).
 pub fn is_project_disabled(project_path: &str, disabled: &[String]) -> bool {
-    let normalized = crate::config::normalize_project_path(project_path);
+    let normalized = crate::config::normalized_project_path(project_path);
     disabled
         .iter()
-        .any(|d| crate::config::normalize_project_path(d) == normalized)
+        .any(|d| crate::config::normalized_project_path(d) == normalized)
 }
+
+/// Above this many disabled entries, a normalized `HashSet` is built; below
+/// it, the direct scan (no allocation) is faster for the common case of a
+/// handful of hidden projects.
+const SMALL_DISABLED_SCAN: usize = 8;
 
 /// Removes disabled projects from a scanned list (in place). Stale disabled
 /// entries (no longer on disk) simply match nothing.
+///
+/// The disabled list is normalized once into a borrowed `HashSet`, so the
+/// check is O(1) per project and allocates nothing: the previous version
+/// normalized every disabled entry for every project (O(n × d) allocations).
 pub fn apply_disabled_filter(projects: &mut Vec<Project>, disabled: &[String]) {
     if disabled.is_empty() {
         return;
     }
-    projects.retain(|p| !is_project_disabled(&p.path, disabled));
+    if disabled.len() <= SMALL_DISABLED_SCAN {
+        projects.retain(|p| !is_project_disabled(&p.path, disabled));
+        return;
+    }
+    let normalized: HashSet<&str> = disabled
+        .iter()
+        .map(|d| crate::config::normalized_project_path(d))
+        .filter(|d| !d.is_empty())
+        .collect();
+    if normalized.is_empty() {
+        return;
+    }
+    projects.retain(|p| !normalized.contains(crate::config::normalized_project_path(&p.path)));
 }
 
 /// Scans the bases and lists their direct subfolders. Missing bases or
@@ -127,18 +148,28 @@ pub fn list_projects(base_dirs: &[String], lang: &str) -> Vec<Project> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            // `DirEntry::file_type` comes from the readdir entry on APFS (no
+            // extra stat). Symlinks still need the follow-up `is_dir` so a
+            // symlinked project folder keeps being listed like before.
+            let Ok(file_type) = entry.file_type() else {
                 continue;
             };
-            if is_hidden(name) {
+            if file_type.is_symlink() {
+                if !path.is_dir() {
+                    continue;
+                }
+            } else if !file_type.is_dir() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if is_hidden(&name) {
                 continue;
             }
             out.push(Project {
-                name: name.to_string(),
                 path: path.to_string_lossy().into_owned(),
+                name,
                 base: normalized.clone(),
             });
         }
