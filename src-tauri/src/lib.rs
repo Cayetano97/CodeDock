@@ -11,6 +11,9 @@ mod i18n;
 mod projects;
 mod terminal;
 
+#[cfg(test)]
+mod perf;
+
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 

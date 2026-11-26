@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "vitest bench",
     "tauri": "tauri"
   },
   "dependencies": {

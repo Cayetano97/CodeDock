@@ -28,6 +28,12 @@ click one and it opens in your chosen terminal with your agent running inside �
 [opencode](https://opencode.ai) by default, or Pi, Claude Code and any custom
 binary from Settings.
 
+## Requirements
+
+- macOS (releases cover Apple Silicon and Intel).
+- Node.js 22.12+ and Rust 1.90+ to build from source (CI uses Node 22 and
+  stable Rust; Tauri 2.12 sets Rust 1.90 as its MSRV).
+
 ## Supported terminals
 
 There is no universal "open this folder and run this command" API on macOS,
@@ -104,7 +110,11 @@ are dropped without breaking the rest.
   `pi`/`claude` presets, custom binary, localized errors), per-terminal
   script/argv builders plus terminal detection — all without launching any
   terminal.
-
+- **Performance** — `npm run bench` runs the Vitest bench for the 5k-project
+  filter/sort/visibility paths; `cargo test --release -- --ignored
+  --nocapture perf_` (in `src-tauri/`) prints ns/op for folder scanning,
+  sorting, disabled filtering, config parsing, terminal detection and the tray
+  dot cache. Both are excluded from the normal test runs.
 
 ## License
 
