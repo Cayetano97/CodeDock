@@ -13,13 +13,21 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.11", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri = { version = "2.12", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-dialog = "2"
-tauri-plugin-autostart = "2.5.1"
-tauri-plugin-single-instance = "2.4"
+tauri-plugin-autostart = "2.7"
+tauri-plugin-single-instance = "2.5"
 tauri-plugin-window-state = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sys-locale = "0.3"
+
+# Standard Tauri release profile: one codegen unit + LTO for runtime speed,
+# abort on panic and strip symbols to cut the bundle size (15 MB → ~7 MB).
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true
