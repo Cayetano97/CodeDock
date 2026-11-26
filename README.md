@@ -9,7 +9,8 @@
   and opens the chosen one in your favorite terminal with your AI agent inside.
   I built this because I never liked juggling shell aliases for this.
   <br />
-  <strong>Status: alpha — macOS only for now.</strong>
+  <strong>Status: alpha — macOS only. The OpenCode + Ghostty path is the most
+  exercised; other terminal/agent combinations are best-effort.</strong>
 </p>
 
 <p align="center">

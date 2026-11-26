@@ -114,6 +114,28 @@ describe("version comparison", () => {
     expect(compareVersions("1.2.4-beta.1", "1.2.4")).toBe(-1);
   });
 
+  it("orders numeric prerelease identifiers numerically", () => {
+    // SemVer 2.0.0 §11.4.2: beta.2 < beta.11 (not lexical beta.11 < beta.2).
+    expect(compareVersions("1.2.4-beta.2", "1.2.4-beta.11")).toBe(-1);
+    expect(compareVersions("1.2.4-beta.11", "1.2.4-beta.2")).toBe(1);
+    expect(isNewerVersion("1.2.4-beta.11", "1.2.4-beta.2")).toBe(true);
+    // Numeric identifiers are lower than alphanumeric ones.
+    expect(compareVersions("1.2.4-1", "1.2.4-alpha")).toBe(-1);
+    expect(compareVersions("1.2.4-alpha", "1.2.4-1")).toBe(1);
+    // A longer list wins when all preceding identifiers are equal.
+    expect(compareVersions("1.2.4-alpha", "1.2.4-alpha.1")).toBe(-1);
+    expect(compareVersions("1.2.4-alpha.1", "1.2.4-alpha")).toBe(1);
+  });
+
+  it("ignores build metadata in prerelease comparisons", () => {
+    expect(compareVersions("1.2.4-beta+build", "1.2.4-beta")).toBe(0);
+    expect(compareVersions("1.2.4-beta.1+build.2", "1.2.4-beta.1")).toBe(0);
+    expect(compareVersions("1.2.4+20260101", "1.2.4")).toBe(0);
+    // Hyphens inside build metadata are not prerelease delimiters.
+    expect(compareVersions("1.2.4+build-1", "1.2.4")).toBe(0);
+    expect(compareVersions("1.2.4-beta+build-1", "1.2.4-beta")).toBe(0);
+  });
+
   it("detects strictly newer versions", () => {
     expect(isNewerVersion("1.2.4", "1.2.3")).toBe(true);
     expect(isNewerVersion("1.2.3", "1.2.3")).toBe(false);

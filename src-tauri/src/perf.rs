@@ -155,12 +155,27 @@ fn perf_detect_terminals() {
 #[test]
 #[ignore]
 fn perf_tray_dots() {
-    // The tray rebuild regenerates the 8 dot images on every refresh.
+    // Cache-hit path: OnceLock keeps the 8 generated images for the process,
+    // so a menu rebuild no longer pays for tray_dot_rgba.
     let iters = 500;
     black_box(crate::tray_dot_images());
     let start = Instant::now();
     for _ in 0..iters {
         black_box(crate::tray_dot_images());
     }
-    report("tray_dot_images (8 x 36px)", start.elapsed(), iters);
+    report(
+        "tray_dot_images (cache hit, 8 x 36px)",
+        start.elapsed(),
+        iters,
+    );
+
+    // Generation cost (first rebuild / cache miss), measured separately so
+    // the cached path above cannot hide a tray_dot_rgba regression.
+    let start = Instant::now();
+    for _ in 0..iters {
+        for &accent in &crate::TRAY_DOT_ACCENTS {
+            black_box(crate::tray_dot_rgba(accent));
+        }
+    }
+    report("tray_dot_rgba (8 x 36px)", start.elapsed(), iters);
 }

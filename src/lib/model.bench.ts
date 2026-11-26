@@ -60,8 +60,11 @@ test("model hot paths (5k projects)", async ({ bench }) => {
     bench("applyDisabledFilter (100 disabled)", () => {
       keep(applyFilter(LIST, DISABLED));
     }),
-    bench("isProjectDisabled (100 disabled)", () => {
+    bench("isProjectDisabled (100 disabled, hit)", () => {
       keep(isDisabled(LIST[0]!.path, DISABLED));
+    }),
+    bench("isProjectDisabled (100 disabled, miss)", () => {
+      keep(isDisabled(LIST[LIST.length - 1]!.path, DISABLED));
     }),
     {
       iterations: 50,

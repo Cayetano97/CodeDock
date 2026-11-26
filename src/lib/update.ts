@@ -83,19 +83,83 @@ export function stripVersionPrefix(raw: unknown): string {
   return v.startsWith("v") || v.startsWith("V") ? v.slice(1).trim() : v;
 }
 
-/** Splits `"1.2.4-beta.1"` into numeric parts + prerelease flag. */
-function parseVersionParts(version: string): { nums: number[]; pre: string } {
-  const [core, ...preRest] = version.split("-");
-  const nums = (core ?? "").split(".").map((p) => {
+/** Parsed version: numeric core + SemVer prerelease identifiers (null = none). */
+interface ParsedVersion {
+  nums: number[];
+  pre: string[] | null;
+}
+
+/** Splits `"1.2.4-beta.1+build"` into numeric parts and prerelease ids. */
+function parseVersionParts(version: string): ParsedVersion {
+  // Build metadata is ignored for precedence (SemVer 2.0.0 §10): strip it
+  // before looking for the prerelease separator, because metadata may contain
+  // hyphens (`1.2.4+build-1`) that are not prerelease delimiters.
+  const plus = version.indexOf("+");
+  const withoutBuild = plus === -1 ? version : version.slice(0, plus);
+  const dash = withoutBuild.indexOf("-");
+  const core = dash === -1 ? withoutBuild : withoutBuild.slice(0, dash);
+  const preRaw = dash === -1 ? "" : withoutBuild.slice(dash + 1);
+  const nums = core.split(".").map((p) => {
     const n = Number.parseInt(p, 10);
     return Number.isFinite(n) && n >= 0 ? n : 0;
   });
-  return { nums, pre: preRest.join("-") };
+  return { nums, pre: preRaw === "" ? null : preRaw.split(".") };
+}
+
+/** Whether a prerelease identifier is numeric (SemVer numeric identifier). */
+function isNumericIdentifier(id: string): boolean {
+  return /^\d+$/.test(id);
 }
 
 /**
- * Compares two versions numerically (`-1 | 0 | 1`). A bare release beats
- * its prerelease (`1.2.4` > `1.2.4-beta`); unparseable input compares as 0.
+ * Compares two numeric identifiers without `Number` overflow: strip leading
+ * zeroes, then compare digit count and lexicographically. SemVer forbids
+ * leading zeroes, but tolerating them keeps hand-written versions from
+ * producing surprising orderings.
+ */
+function compareNumericIdentifiers(a: string, b: string): -1 | 0 | 1 {
+  const na = a.replace(/^0+/, "") || "0";
+  const nb = b.replace(/^0+/, "") || "0";
+  if (na.length !== nb.length) return na.length < nb.length ? -1 : 1;
+  if (na === nb) return 0;
+  return na < nb ? -1 : 1;
+}
+
+/**
+ * SemVer prerelease precedence (2.0.0 §11.4): identifiers are compared left
+ * to right, numeric identifiers numerically, alphanumeric ones lexically,
+ * numeric ones lower than alphanumeric ones; a longer list wins when every
+ * preceding identifier is equal. A release (null) wins over any prerelease.
+ */
+function comparePrerelease(a: string[] | null, b: string[] | null): -1 | 0 | 1 {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const x = a[i] ?? "";
+    const y = b[i] ?? "";
+    const xNumeric = isNumericIdentifier(x);
+    const yNumeric = isNumericIdentifier(y);
+    if (xNumeric && yNumeric) {
+      const cmp = compareNumericIdentifiers(x, y);
+      if (cmp !== 0) return cmp;
+    } else if (xNumeric !== yNumeric) {
+      return xNumeric ? -1 : 1;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  if (a.length === b.length) return 0;
+  return a.length < b.length ? -1 : 1;
+}
+
+/**
+ * Compares two versions following SemVer precedence (`-1 | 0 | 1`): numeric
+ * core and numeric prerelease identifiers compare numerically, alphanumeric
+ * identifiers lexically, a bare release beats its prerelease, and build
+ * metadata is ignored. Missing core parts compare as 0 and unparseable input
+ * compares as 0, so a hand-written version never breaks the updater gate.
  */
 export function compareVersions(a: unknown, b: unknown): -1 | 0 | 1 {
   const sa = stripVersionPrefix(a);
@@ -110,10 +174,7 @@ export function compareVersions(a: unknown, b: unknown): -1 | 0 | 1 {
     if (x < y) return -1;
     if (x > y) return 1;
   }
-  if (pa.pre === pb.pre) return 0;
-  if (pa.pre === "") return 1;
-  if (pb.pre === "") return -1;
-  return pa.pre < pb.pre ? -1 : 1;
+  return comparePrerelease(pa.pre, pb.pre);
 }
 
 /** Whether `available` is strictly newer than `current`. */

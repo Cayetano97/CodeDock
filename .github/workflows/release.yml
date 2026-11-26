@@ -85,7 +85,9 @@ jobs:
           releaseName: "CodeDock ${{ github.ref_name }}"
           releaseBody: "See the assets below to download CodeDock ${{ github.ref_name }}."
           releaseDraft: false
-          prerelease: false
+          # beta/rc tags (vX.Y.Z-beta.N) stay out of releases/latest so the
+          # updater only promotes them when they are deliberately marked stable.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generateReleaseNotes: true
           args: --target ${{ matrix.target }}
         env:

@@ -169,19 +169,32 @@ fn legacy_login_item_listed(names: &str, wanted: &str) -> bool {
     names.split(',').any(|name| name.trim() == wanted)
 }
 
+/// Whether the one-time legacy-login-item check can be marked done.
+///
+/// The marker is written only when there is nothing left to clean up: either
+/// there was no legacy item, or the LaunchAgent is enabled and the legacy item
+/// was deleted. A failed enable/delete keeps retrying on the next launch
+/// instead of leaving a duplicate login item behind.
+#[cfg(target_os = "macos")]
+fn legacy_login_item_cleanup_done(has_legacy: bool, autostart_ready: bool, deleted: bool) -> bool {
+    !has_legacy || (autostart_ready && deleted)
+}
+
 /// Removes a legacy AppleScript login item left by versions that used
 /// `MacosLauncher::AppleScript`, so enabling autostart never yields duplicate
 /// entries. The old item is named after the `.app` bundle (`CodeDock`); the
 /// LaunchAgent plist uses the package name instead. When the legacy item is
 /// found and no LaunchAgent entry exists yet, the LaunchAgent entry is
-/// enabled first to preserve the user's choice. Best-effort: failures are
-/// ignored.
+/// enabled first to preserve the user's choice.
 ///
-/// The check shells out to `osascript`/System Events, measured at 170–840 ms
+/// The check shells out to `osascript`/System Events, measured at 0.1–0.8 s
 /// per launch, and used to run synchronously in `setup` on every boot. A
 /// one-time marker in the app config dir removes that cost from every launch
 /// after the first check. A failed check (no stdout/success) writes no marker
-/// so the next launch retries.
+/// so the next launch retries; the failed path is cheap (~30–40 ms), so the
+/// retry is deliberate: granting Automation later fixes itself without a
+/// reinstall. A failed cleanup also writes no marker, so a leftover legacy
+/// item is never marked as done.
 #[cfg(target_os = "macos")]
 fn migrate_legacy_applescript_login_item(app: &AppHandle, config_dir: &Path) {
     const LEGACY_NAME: &str = "CodeDock";
@@ -207,22 +220,35 @@ fn migrate_legacy_applescript_login_item(app: &AppHandle, config_dir: &Path) {
     let Some(names) = names else {
         return;
     };
-    // The check ran (with or without a legacy item): never pay for it again.
-    let _ = std::fs::write(&marker, "1");
-    if !legacy_login_item_listed(&names, LEGACY_NAME) {
+    let has_legacy = legacy_login_item_listed(&names, LEGACY_NAME);
+    if !has_legacy {
+        // Nothing to migrate: the check is done, never pay for it again.
+        let _ = std::fs::write(&marker, "1");
         return;
     }
-    if let Ok(enabled) = app.autolaunch().is_enabled() {
-        if !enabled {
-            let _ = app.autolaunch().enable();
-        }
+    // Preserve the user's autostart choice before deleting the old login item.
+    // If the LaunchAgent cannot be enabled, keep the legacy item and retry on
+    // the next launch instead of silently dropping autostart.
+    let autostart_ready = match app.autolaunch().is_enabled() {
+        Ok(true) => true,
+        Ok(false) => app.autolaunch().enable().is_ok(),
+        Err(_) => false,
+    };
+    if !autostart_ready {
+        return;
     }
-    let _ = std::process::Command::new("osascript")
+    let deleted = std::process::Command::new("osascript")
         .args([
             "-e",
             &format!("tell application \"System Events\" to delete login item \"{LEGACY_NAME}\""),
         ])
-        .output();
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false);
+    if legacy_login_item_cleanup_done(has_legacy, autostart_ready, deleted) {
+        // The cleanup completed: never pay for the check again.
+        let _ = std::fs::write(&marker, "1");
+    }
 }
 
 /// Rebuilds the tray menu with the current projects (disabled ones excluded),
@@ -542,5 +568,17 @@ mod tests {
         assert!(legacy_login_item_listed(" Other ,CodeDock ", "CodeDock"));
         assert!(!legacy_login_item_listed("CodeDockBeta, Other", "CodeDock"));
         assert!(!legacy_login_item_listed("", "CodeDock"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn legacy_cleanup_marker_requires_successful_cleanup() {
+        // No legacy item: the check is complete even if autostart is off.
+        assert!(legacy_login_item_cleanup_done(false, false, false));
+        // Legacy item: the marker needs both the LaunchAgent and the delete.
+        assert!(legacy_login_item_cleanup_done(true, true, true));
+        assert!(!legacy_login_item_cleanup_done(true, true, false));
+        assert!(!legacy_login_item_cleanup_done(true, false, true));
+        assert!(!legacy_login_item_cleanup_done(true, false, false));
     }
 }
